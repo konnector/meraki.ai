@@ -7,6 +7,7 @@ import Link from "next/link"
 import SpreadsheetGrid from "@/components/SpreadSheet/spreadsheet-grid"
 import AIAssistantPanel from "@/components/SpreadSheet/ai-assistant-panel"
 import Toolbar from "@/components/SpreadSheet/toolbar"
+import { FormulaBar } from "@/components/SpreadSheet/formula-bar"
 import DashboardLayout from "@/components/Dashboard/dashboard-layout"
 import KeyboardShortcutsHelp from "@/components/SpreadSheet/keyboard-shortcuts-help"
 import { ArrowLeft } from "lucide-react"
@@ -78,6 +79,7 @@ export default function SpreadsheetPage({ params }: { params: { id: string } }) 
             </div>
           </div>
           <Toolbar />
+          <FormulaBar />
         </header>
 
         <main className="flex flex-1 overflow-hidden">

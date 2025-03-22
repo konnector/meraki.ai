@@ -27,6 +27,8 @@ export default function SpreadsheetGrid() {
     getCellId,
     getCellPosition,
     getSelectedCells,
+    getCellDisplayValue,
+    isCellFormula,
   } = useSpreadsheet()
 
   const gridRef = useRef<HTMLDivElement>(null)
@@ -208,6 +210,8 @@ export default function SpreadsheetGrid() {
       // Don't start selection mode immediately, wait to see if user drags
       setSelectionStart({ row, col })
     }
+
+    console.log(`Cell mouse down at row: ${row}, col: ${col}`);
   }
 
   const handleCellMouseMove = (row: number, col: number, e: MouseEvent) => {
@@ -254,11 +258,19 @@ export default function SpreadsheetGrid() {
   const handleCellDoubleClick = (row: number, col: number) => {
     const cellId = getCellId({ row, col })
     setActiveCell(cellId)
-    setEditValue(cells[cellId]?.value || "")
+    
+    // Get the appropriate value to edit - if it's a formula, we want to edit the formula itself
+    const valueToEdit = isCellFormula(cellId) && cells[cellId]?.formula 
+      ? cells[cellId].formula 
+      : (cells[cellId]?.value || "")
+      
+    setEditValue(valueToEdit)
     setIsEditing(true)
 
     // Clear selection when editing
     setSelection(null)
+
+    console.log(`Editing cell at row: ${row}, col: ${col}`);
   }
 
   const handleCellKeyDown = (e: KeyboardEvent) => {
@@ -269,7 +281,12 @@ export default function SpreadsheetGrid() {
         updateCell(activeCell, editValue)
         setIsEditing(false)
       } else {
-        setEditValue(cells[activeCell]?.value || "")
+        // Get the appropriate value to edit - if it's a formula, edit the formula
+        const valueToEdit = isCellFormula(activeCell) && cells[activeCell]?.formula 
+          ? cells[activeCell].formula 
+          : (cells[activeCell]?.value || "")
+          
+        setEditValue(valueToEdit)
         setIsEditing(true)
         setSelection(null)
       }
@@ -308,10 +325,13 @@ export default function SpreadsheetGrid() {
 
       e.preventDefault()
     }
+
+    console.log(`Key pressed: ${e.key}`);
   }
 
   const handleCellChange = (e: ChangeEvent<HTMLInputElement>) => {
     setEditValue(e.target.value)
+    console.log(`Cell edit value changed: ${e.target.value}`)
   }
 
   const handleCellBlur = () => {
@@ -319,6 +339,7 @@ export default function SpreadsheetGrid() {
       updateCell(activeCell, editValue)
       setIsEditing(false)
     }
+    console.log(`Cell edit completed. New value: ${editValue}`)
   }
 
   // Handle typing directly without double click (auto-start edit mode)
@@ -365,6 +386,22 @@ export default function SpreadsheetGrid() {
     
     return rowIndex >= startRow && rowIndex <= endRow && startCol === 0 && endCol === 25
   }
+
+  // Log component render
+  useEffect(() => {
+    console.log("SpreadsheetGrid rendered");
+    return () => {
+      console.log("SpreadsheetGrid unmounted");
+    };
+  }, []);
+
+  // Hook into selection changes to log them
+  useEffect(() => {
+    if (selection) {
+      console.log("Selection changed:", selection);
+      console.log("Selected cells:", getSelectedCells());
+    }
+  }, [selection, getSelectedCells]);
 
   return (
     <div 
@@ -442,7 +479,10 @@ export default function SpreadsheetGrid() {
                     />
                   ) : (
                     <div
-                      className="px-2 py-1 overflow-hidden text-sm whitespace-nowrap h-full flex items-center"
+                      className={cn(
+                        "px-2 py-1 overflow-hidden text-sm whitespace-nowrap h-full flex items-center",
+                        cells[cellId]?.error && "text-red-500"
+                      )}
                       style={{
                         fontFamily:
                           cells[cellId]?.format?.fontFamily === "serif"
@@ -474,7 +514,7 @@ export default function SpreadsheetGrid() {
                         fontStyle: cells[cellId]?.format?.italic ? "italic" : "normal",
                         textDecoration: cells[cellId]?.format?.underline ? "underline" : "none",
                         textAlign: cells[cellId]?.format?.align || "left",
-                        color: cells[cellId]?.format?.textColor || "inherit",
+                        color: cells[cellId]?.error ? "red" : (cells[cellId]?.format?.textColor || "inherit"),
                         backgroundColor: cells[cellId]?.format?.fillColor || "transparent",
                         width: "100%",
                         justifyContent:
@@ -486,7 +526,8 @@ export default function SpreadsheetGrid() {
                         ...(preventSelectionStyle as any),
                       }}
                     >
-                      {cells[cellId]?.value || ""}
+                      {/* Display calculated value for formulas, otherwise show raw value */}
+                      {isCellFormula(cellId) ? getCellDisplayValue(cellId) : cells[cellId]?.value || ""}
                     </div>
                   )}
                 </div>

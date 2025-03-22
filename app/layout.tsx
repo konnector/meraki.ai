@@ -27,7 +27,11 @@ const poppins = Poppins({
 export const metadata: Metadata = {
   title: "Meraki.ai - AI-Powered Spreadsheet",
   description: "A modern spreadsheet application with AI capabilities",
-  generator: 'v0.dev'
+  generator: 'v0dev',
+  icons: {
+    icon: '/sava.png',
+    apple: '/sava.png',
+  }
 }
 
 export default function RootLayout({
