@@ -17,6 +17,12 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { useSpreadsheet } from "@/context/spreadsheet-context"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 export default function Toolbar() {
   const { 
@@ -87,200 +93,306 @@ export default function Toolbar() {
   ]
 
   return (
-    <div className="flex items-center gap-2 px-4 py-1 border-b border-gray-200 overflow-x-auto">
-      <div className="flex items-center h-8 px-2 bg-gray-100 rounded text-sm text-gray-700 min-w-[80px]">
-        {activeCell || ""}
-      </div>
-
-      <Separator orientation="vertical" className="h-6" />
-
-      <div className="flex items-center gap-1">
-        <Select
-          value={currentCell?.format?.fontFamily || "sans"}
-          onValueChange={(value) => handleFormatChange("fontFamily", value)}
-        >
-          <SelectTrigger className="h-8 w-[140px]">
-            <SelectValue placeholder="Font" />
-          </SelectTrigger>
-          <SelectContent>
-            {fontFamilies.map((font) => (
-              <SelectItem key={font.value} value={font.value} className={`font-${font.value}`}>
-                {font.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={currentCell?.format?.fontSize || "normal"}
-          onValueChange={(value) => handleFormatChange("fontSize", value)}
-        >
-          <SelectTrigger className="h-8 w-[80px]">
-            <SelectValue placeholder="Size" />
-          </SelectTrigger>
-          <SelectContent>
-            {fontSizes.map((size) => (
-              <SelectItem key={size.value} value={size.value}>
-                {size.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <Separator orientation="vertical" className="h-6" />
-
-      <div className="flex items-center gap-0.5">
-        <Button
-          variant={currentCell?.format?.bold ? "secondary" : "ghost"}
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => handleFormatChange("bold", !currentCell?.format?.bold)}
-        >
-          <Bold className="h-4 w-4" />
-        </Button>
-        <Button
-          variant={currentCell?.format?.italic ? "secondary" : "ghost"}
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => handleFormatChange("italic", !currentCell?.format?.italic)}
-        >
-          <Italic className="h-4 w-4" />
-        </Button>
-        <Button
-          variant={currentCell?.format?.underline ? "secondary" : "ghost"}
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => handleFormatChange("underline", !currentCell?.format?.underline)}
-        >
-          <Underline className="h-4 w-4" />
-        </Button>
-      </div>
-
-      <Separator orientation="vertical" className="h-6" />
-
-      <div className="flex items-center gap-0.5">
-        <Button
-          variant={currentCell?.format?.align === "left" ? "secondary" : "ghost"}
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => handleFormatChange("align", "left")}
-        >
-          <AlignLeft className="h-4 w-4" />
-        </Button>
-        <Button
-          variant={currentCell?.format?.align === "center" ? "secondary" : "ghost"}
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => handleFormatChange("align", "center")}
-        >
-          <AlignCenter className="h-4 w-4" />
-        </Button>
-        <Button
-          variant={currentCell?.format?.align === "right" ? "secondary" : "ghost"}
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => handleFormatChange("align", "right")}
-        >
-          <AlignRight className="h-4 w-4" />
-        </Button>
-      </div>
-
-      <Separator orientation="vertical" className="h-6" />
-
-      {/* Text Color Picker */}
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8 relative">
-            <Palette className="h-4 w-4" />
-            <div
-              className="absolute bottom-1 right-1 w-2 h-2 rounded-full border border-gray-300"
-              style={{ backgroundColor: currentCell?.format?.textColor || "#000000" }}
-            />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-64 p-3">
-          <div className="space-y-2">
-            <h4 className="text-sm font-medium">Text Color</h4>
-            <div className="grid grid-cols-5 gap-2">
-              {colorPresets.map((color) => (
-                <button
-                  key={color}
-                  className="w-8 h-8 rounded-md border border-gray-200 flex items-center justify-center"
-                  style={{ backgroundColor: color }}
-                  onClick={() => handleFormatChange("textColor", color)}
-                >
-                  {currentCell?.format?.textColor === color && (
-                    <div className="w-2 h-2 bg-white rounded-full shadow-sm" />
-                  )}
-                </button>
-              ))}
+    <TooltipProvider>
+      <div className="flex items-center gap-2 px-4 py-1 border-b border-gray-200 overflow-x-auto">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center h-8 px-2 bg-gray-100 rounded text-sm text-gray-700 min-w-[80px]">
+              {activeCell || ""}
             </div>
-          </div>
-        </PopoverContent>
-      </Popover>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Active cell reference</p>
+          </TooltipContent>
+        </Tooltip>
 
-      {/* Fill Color Picker */}
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8 relative">
-            <PaintBucket className="h-4 w-4" />
-            <div
-              className="absolute bottom-1 right-1 w-2 h-2 rounded-full border border-gray-300"
-              style={{ backgroundColor: currentCell?.format?.fillColor || "transparent" }}
-            />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-64 p-3">
-          <div className="space-y-2">
-            <h4 className="text-sm font-medium">Fill Color</h4>
-            <div className="grid grid-cols-5 gap-2">
-              <button
-                className="w-8 h-8 rounded-md border border-gray-200 flex items-center justify-center bg-white"
-                onClick={() => handleFormatChange("fillColor", "transparent")}
+        <Separator orientation="vertical" className="h-6" />
+
+        <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <Select
+                  value={currentCell?.format?.fontFamily || "sans"}
+                  onValueChange={(value) => handleFormatChange("fontFamily", value)}
+                >
+                  <SelectTrigger className="h-8 w-[140px]">
+                    <SelectValue placeholder="Font" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {fontFamilies.map((font) => (
+                      <SelectItem key={font.value} value={font.value} className={`font-${font.value}`}>
+                        {font.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Change font family</p>
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <Select
+                  value={currentCell?.format?.fontSize || "normal"}
+                  onValueChange={(value) => handleFormatChange("fontSize", value)}
+                >
+                  <SelectTrigger className="h-8 w-[80px]">
+                    <SelectValue placeholder="Size" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {fontSizes.map((size) => (
+                      <SelectItem key={size.value} value={size.value}>
+                        {size.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Change font size</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        <Separator orientation="vertical" className="h-6" />
+
+        <div className="flex items-center gap-0.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={currentCell?.format?.bold ? "secondary" : "ghost"}
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => handleFormatChange("bold", !currentCell?.format?.bold)}
               >
-                {(!currentCell?.format?.fillColor || currentCell?.format?.fillColor === "transparent") && (
-                  <div className="w-2 h-2 bg-gray-400 rounded-full shadow-sm" />
-                )}
-              </button>
-              {colorPresets.slice(1).map((color) => (
-                <button
-                  key={color}
-                  className="w-8 h-8 rounded-md border border-gray-200 flex items-center justify-center"
-                  style={{ backgroundColor: color }}
-                  onClick={() => handleFormatChange("fillColor", color)}
-                >
-                  {currentCell?.format?.fillColor === color && (
-                    <div className="w-2 h-2 bg-white rounded-full shadow-sm" />
-                  )}
-                </button>
-              ))}
+                <Bold className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Bold</p>
+            </TooltipContent>
+          </Tooltip>
+          
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={currentCell?.format?.italic ? "secondary" : "ghost"}
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => handleFormatChange("italic", !currentCell?.format?.italic)}
+              >
+                <Italic className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Italic</p>
+            </TooltipContent>
+          </Tooltip>
+          
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={currentCell?.format?.underline ? "secondary" : "ghost"}
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => handleFormatChange("underline", !currentCell?.format?.underline)}
+              >
+                <Underline className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Underline</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        <Separator orientation="vertical" className="h-6" />
+
+        <div className="flex items-center gap-0.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={currentCell?.format?.align === "left" ? "secondary" : "ghost"}
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => handleFormatChange("align", "left")}
+              >
+                <AlignLeft className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Align left</p>
+            </TooltipContent>
+          </Tooltip>
+          
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={currentCell?.format?.align === "center" ? "secondary" : "ghost"}
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => handleFormatChange("align", "center")}
+              >
+                <AlignCenter className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Align center</p>
+            </TooltipContent>
+          </Tooltip>
+          
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={currentCell?.format?.align === "right" ? "secondary" : "ghost"}
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => handleFormatChange("align", "right")}
+              >
+                <AlignRight className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Align right</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        <Separator orientation="vertical" className="h-6" />
+
+        {/* Text Color Picker */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 relative">
+                    <Palette className="h-4 w-4" />
+                    <div
+                      className="absolute bottom-1 right-1 w-2 h-2 rounded-full border border-gray-300"
+                      style={{ backgroundColor: currentCell?.format?.textColor || "#000000" }}
+                    />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-3">
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-medium">Text Color</h4>
+                    <div className="grid grid-cols-5 gap-2">
+                      {colorPresets.map((color) => (
+                        <button
+                          key={color}
+                          className="w-8 h-8 rounded-md border border-gray-200 flex items-center justify-center"
+                          style={{ backgroundColor: color }}
+                          onClick={() => handleFormatChange("textColor", color)}
+                        >
+                          {currentCell?.format?.textColor === color && (
+                            <div className="w-2 h-2 bg-white rounded-full shadow-sm" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
-          </div>
-        </PopoverContent>
-      </Popover>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Text color</p>
+          </TooltipContent>
+        </Tooltip>
 
-      <Separator orientation="vertical" className="h-6" />
+        {/* Fill Color Picker */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 relative">
+                    <PaintBucket className="h-4 w-4" />
+                    <div
+                      className="absolute bottom-1 right-1 w-2 h-2 rounded-full border border-gray-300"
+                      style={{ backgroundColor: currentCell?.format?.fillColor || "transparent" }}
+                    />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-3">
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-medium">Fill Color</h4>
+                    <div className="grid grid-cols-5 gap-2">
+                      <button
+                        className="w-8 h-8 rounded-md border border-gray-200 flex items-center justify-center bg-white"
+                        onClick={() => handleFormatChange("fillColor", "transparent")}
+                      >
+                        {(!currentCell?.format?.fillColor || currentCell?.format?.fillColor === "transparent") && (
+                          <div className="w-2 h-2 bg-gray-400 rounded-full shadow-sm" />
+                        )}
+                      </button>
+                      {colorPresets.slice(1).map((color) => (
+                        <button
+                          key={color}
+                          className="w-8 h-8 rounded-md border border-gray-200 flex items-center justify-center"
+                          style={{ backgroundColor: color }}
+                          onClick={() => handleFormatChange("fillColor", color)}
+                        >
+                          {currentCell?.format?.fillColor === color && (
+                            <div className="w-2 h-2 bg-white rounded-full shadow-sm" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Fill color</p>
+          </TooltipContent>
+        </Tooltip>
 
-      <div className="flex items-center gap-0.5">
-        <Button
-          variant={currentCell?.format?.type === "text" ? "secondary" : "ghost"}
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => handleFormatChange("type", "text")}
-        >
-          <Type className="h-4 w-4" />
-        </Button>
-        <Button
-          variant={currentCell?.format?.type === "number" ? "secondary" : "ghost"}
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => handleFormatChange("type", "number")}
-        >
-          <Calculator className="h-4 w-4" />
-        </Button>
+        <Separator orientation="vertical" className="h-6" />
+
+        <div className="flex items-center gap-0.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={currentCell?.format?.type === "text" ? "secondary" : "ghost"}
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => handleFormatChange("type", "text")}
+              >
+                <Type className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Format as text</p>
+            </TooltipContent>
+          </Tooltip>
+          
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={currentCell?.format?.type === "number" ? "secondary" : "ghost"}
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => handleFormatChange("type", "number")}
+              >
+                <Calculator className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Format as number</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   )
 }
 

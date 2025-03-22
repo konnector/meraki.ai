@@ -101,6 +101,82 @@ export default function SpreadsheetGrid() {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [isEditing, copySelection, cutSelection, pasteSelection, deleteSelection, setSelection])
 
+  // Handle column header click - select entire column
+  const handleColumnHeaderClick = (colIndex: number, e: MouseEvent) => {
+    e.preventDefault()
+    
+    // If shift is held, extend the current selection
+    if (e.shiftKey && selection) {
+      const currentColStart = Math.min(selection.start.col, selection.end.col)
+      const currentColEnd = Math.max(selection.start.col, selection.end.col)
+      
+      // Determine how to extend the selection
+      if (colIndex < currentColStart) {
+        // Extend to the left
+        setSelection({
+          start: { row: 0, col: colIndex },
+          end: { row: 99, col: currentColEnd }
+        })
+      } else if (colIndex > currentColEnd) {
+        // Extend to the right
+        setSelection({
+          start: { row: 0, col: currentColStart },
+          end: { row: 99, col: colIndex }
+        })
+      } else {
+        // Click is within current selection, so don't change
+        return
+      }
+    } else {
+      // Select the entire column
+      setSelection({
+        start: { row: 0, col: colIndex },
+        end: { row: 99, col: colIndex }
+      })
+    }
+    
+    // Set the active cell to the top of the column
+    setActiveCell(getCellId({ row: 0, col: colIndex }))
+  }
+  
+  // Handle row header click - select entire row
+  const handleRowHeaderClick = (rowIndex: number, e: MouseEvent) => {
+    e.preventDefault()
+    
+    // If shift is held, extend the current selection
+    if (e.shiftKey && selection) {
+      const currentRowStart = Math.min(selection.start.row, selection.end.row)
+      const currentRowEnd = Math.max(selection.start.row, selection.end.row)
+      
+      // Determine how to extend the selection
+      if (rowIndex < currentRowStart) {
+        // Extend upward
+        setSelection({
+          start: { row: rowIndex, col: 0 },
+          end: { row: currentRowEnd, col: 25 }
+        })
+      } else if (rowIndex > currentRowEnd) {
+        // Extend downward
+        setSelection({
+          start: { row: currentRowStart, col: 0 },
+          end: { row: rowIndex, col: 25 }
+        })
+      } else {
+        // Click is within current selection, so don't change
+        return
+      }
+    } else {
+      // Select the entire row
+      setSelection({
+        start: { row: rowIndex, col: 0 },
+        end: { row: rowIndex, col: 25 }
+      })
+    }
+    
+    // Set the active cell to the start of the row
+    setActiveCell(getCellId({ row: rowIndex, col: 0 }))
+  }
+
   const handleCellMouseDown = (row: number, col: number, e: MouseEvent) => {
     if (isEditing) return
     
@@ -266,6 +342,30 @@ export default function SpreadsheetGrid() {
     return row >= startRow && row <= endRow && col >= startCol && col <= endCol
   }
 
+  // Check if an entire column is selected (for header highlighting)
+  const isEntireColumnSelected = (colIndex: number): boolean => {
+    if (!selection) return false
+    
+    const startCol = Math.min(selection.start.col, selection.end.col)
+    const endCol = Math.max(selection.start.col, selection.end.col)
+    const startRow = Math.min(selection.start.row, selection.end.row)
+    const endRow = Math.max(selection.start.row, selection.end.row)
+    
+    return colIndex >= startCol && colIndex <= endCol && startRow === 0 && endRow === 99
+  }
+  
+  // Check if an entire row is selected (for header highlighting)
+  const isEntireRowSelected = (rowIndex: number): boolean => {
+    if (!selection) return false
+    
+    const startRow = Math.min(selection.start.row, selection.end.row)
+    const endRow = Math.max(selection.start.row, selection.end.row)
+    const startCol = Math.min(selection.start.col, selection.end.col)
+    const endCol = Math.max(selection.start.col, selection.end.col)
+    
+    return rowIndex >= startRow && rowIndex <= endRow && startCol === 0 && endCol === 25
+  }
+
   return (
     <div 
       className="relative overflow-auto h-full" 
@@ -281,11 +381,15 @@ export default function SpreadsheetGrid() {
           <div className="h-10 bg-gray-100 border-b border-r border-gray-200 flex items-center justify-center" style={preventSelectionStyle}></div>
 
           {/* Column headers */}
-          {columnHeaders.map((header) => (
+          {columnHeaders.map((header, colIndex) => (
             <div
               key={header}
-              className="h-10 bg-gray-100 border-b border-r border-gray-200 flex items-center justify-center font-medium text-gray-600"
+              className={cn(
+                "h-10 bg-gray-100 border-b border-r border-gray-200 flex items-center justify-center font-medium text-gray-600 cursor-pointer hover:bg-gray-200 transition-colors",
+                isEntireColumnSelected(colIndex) && "bg-blue-100"
+              )}
               style={preventSelectionStyle}
+              onClick={(e) => handleColumnHeaderClick(colIndex, e)}
             >
               {header}
             </div>
@@ -297,8 +401,12 @@ export default function SpreadsheetGrid() {
           <div key={rowNum} className="grid grid-cols-[40px_repeat(26,100px)]">
             {/* Row header */}
             <div 
-              className="h-8 bg-gray-100 border-b border-r border-gray-200 flex items-center justify-center font-medium text-gray-600 sticky left-0 z-10"
+              className={cn(
+                "h-8 bg-gray-100 border-b border-r border-gray-200 flex items-center justify-center font-medium text-gray-600 sticky left-0 z-10 cursor-pointer hover:bg-gray-200 transition-colors",
+                isEntireRowSelected(rowIndex) && "bg-blue-100"
+              )}
               style={preventSelectionStyle}
+              onClick={(e) => handleRowHeaderClick(rowIndex, e)}
             >
               {rowNum}
             </div>
