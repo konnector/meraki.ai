@@ -1,0 +1,292 @@
+"use client"
+
+import { useState } from "react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Separator } from "@/components/ui/separator"
+import DashboardLayout from "@/components/Dashboard/dashboard-layout"
+import { User, Bell, Shield, Palette, Save, Trash2, LogOut } from "lucide-react"
+
+export default function SettingsPage() {
+  const [formState, setFormState] = useState({
+    name: "John Doe",
+    email: "john.doe@example.com",
+    language: "english",
+    theme: "light",
+    notifications: {
+      email: true,
+      push: false,
+      updates: true,
+      newsletter: false,
+    },
+  })
+
+  const handleInputChange = (field: string, value: string) => {
+    setFormState((prev) => ({
+      ...prev,
+      [field]: value,
+    }))
+  }
+
+  const handleNotificationChange = (field: string, value: boolean) => {
+    setFormState((prev) => ({
+      ...prev,
+      notifications: {
+        ...prev.notifications,
+        [field]: value,
+      },
+    }))
+  }
+
+  return (
+    <DashboardLayout>
+      <div className="p-6 max-w-4xl mx-auto">
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">Settings</h1>
+
+        <Tabs defaultValue="account" className="space-y-6">
+          <TabsList className="mb-6">
+            <TabsTrigger value="account" className="flex items-center gap-2">
+              <User className="h-4 w-4" />
+              Account
+            </TabsTrigger>
+            <TabsTrigger value="notifications" className="flex items-center gap-2">
+              <Bell className="h-4 w-4" />
+              Notifications
+            </TabsTrigger>
+            <TabsTrigger value="appearance" className="flex items-center gap-2">
+              <Palette className="h-4 w-4" />
+              Appearance
+            </TabsTrigger>
+            <TabsTrigger value="security" className="flex items-center gap-2">
+              <Shield className="h-4 w-4" />
+              Security
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="account" className="space-y-6">
+            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+              <h2 className="text-xl font-semibold text-gray-900">Profile Information</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <Label htmlFor="name">Full Name</Label>
+                  <Input id="name" value={formState.name} onChange={(e) => handleInputChange("name", e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email Address</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={formState.email}
+                    onChange={(e) => handleInputChange("email", e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="language">Language</Label>
+                <Select value={formState.language} onValueChange={(value) => handleInputChange("language", value)}>
+                  <SelectTrigger id="language">
+                    <SelectValue placeholder="Select language" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="english">English</SelectItem>
+                    <SelectItem value="spanish">Spanish</SelectItem>
+                    <SelectItem value="french">French</SelectItem>
+                    <SelectItem value="german">German</SelectItem>
+                    <SelectItem value="japanese">Japanese</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex justify-end">
+                <Button className="bg-gray-900 text-white hover:bg-gray-800">
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Changes
+                </Button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+              <h2 className="text-xl font-semibold text-gray-900">Danger Zone</h2>
+              <p className="text-gray-600">Once you delete your account, there is no going back. Please be certain.</p>
+              <Button variant="destructive">
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Account
+              </Button>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="notifications" className="space-y-6">
+            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+              <h2 className="text-xl font-semibold text-gray-900">Notification Preferences</h2>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-medium text-gray-900">Email Notifications</h3>
+                    <p className="text-sm text-gray-600">Receive notifications via email</p>
+                  </div>
+                  <Switch
+                    checked={formState.notifications.email}
+                    onCheckedChange={(checked) => handleNotificationChange("email", checked)}
+                  />
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-medium text-gray-900">Push Notifications</h3>
+                    <p className="text-sm text-gray-600">Receive notifications on your device</p>
+                  </div>
+                  <Switch
+                    checked={formState.notifications.push}
+                    onCheckedChange={(checked) => handleNotificationChange("push", checked)}
+                  />
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-medium text-gray-900">Product Updates</h3>
+                    <p className="text-sm text-gray-600">Receive updates about new features</p>
+                  </div>
+                  <Switch
+                    checked={formState.notifications.updates}
+                    onCheckedChange={(checked) => handleNotificationChange("updates", checked)}
+                  />
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-medium text-gray-900">Newsletter</h3>
+                    <p className="text-sm text-gray-600">Receive our monthly newsletter</p>
+                  </div>
+                  <Switch
+                    checked={formState.notifications.newsletter}
+                    onCheckedChange={(checked) => handleNotificationChange("newsletter", checked)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button className="bg-gray-900 text-white hover:bg-gray-800">
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Preferences
+                </Button>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="appearance" className="space-y-6">
+            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+              <h2 className="text-xl font-semibold text-gray-900">Theme Settings</h2>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="theme">Theme</Label>
+                  <Select value={formState.theme} onValueChange={(value) => handleInputChange("theme", value)}>
+                    <SelectTrigger id="theme">
+                      <SelectValue placeholder="Select theme" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="light">Light</SelectItem>
+                      <SelectItem value="dark">Dark</SelectItem>
+                      <SelectItem value="system">System</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
+                  <div
+                    className={`border-2 rounded-lg p-4 cursor-pointer ${
+                      formState.theme === "light" ? "border-gray-900" : "border-gray-200"
+                    }`}
+                    onClick={() => handleInputChange("theme", "light")}
+                  >
+                    <div className="h-24 bg-white border border-gray-200 rounded-md mb-2"></div>
+                    <p className="text-sm font-medium text-center">Light</p>
+                  </div>
+
+                  <div
+                    className={`border-2 rounded-lg p-4 cursor-pointer ${
+                      formState.theme === "dark" ? "border-gray-900" : "border-gray-200"
+                    }`}
+                    onClick={() => handleInputChange("theme", "dark")}
+                  >
+                    <div className="h-24 bg-gray-900 border border-gray-700 rounded-md mb-2"></div>
+                    <p className="text-sm font-medium text-center text-gray-900">Dark</p>
+                  </div>
+
+                  <div
+                    className={`border-2 rounded-lg p-4 cursor-pointer ${
+                      formState.theme === "system" ? "border-gray-900" : "border-gray-200"
+                    }`}
+                    onClick={() => handleInputChange("theme", "system")}
+                  >
+                    <div className="h-24 bg-gradient-to-r from-white to-gray-900 border border-gray-200 rounded-md mb-2"></div>
+                    <p className="text-sm font-medium text-center">System</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button className="bg-gray-900 text-white hover:bg-gray-800">
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Theme
+                </Button>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="security" className="space-y-6">
+            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+              <h2 className="text-xl font-semibold text-gray-900">Password</h2>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="current-password">Current Password</Label>
+                  <Input id="current-password" type="password" />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="new-password">New Password</Label>
+                  <Input id="new-password" type="password" />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="confirm-password">Confirm New Password</Label>
+                  <Input id="confirm-password" type="password" />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button className="bg-gray-900 text-white hover:bg-gray-800">
+                  <Save className="h-4 w-4 mr-2" />
+                  Update Password
+                </Button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+              <h2 className="text-xl font-semibold text-gray-900">Sessions</h2>
+              <p className="text-gray-600">This will log you out of all devices except your current one.</p>
+              <Button variant="outline">
+                <LogOut className="h-4 w-4 mr-2" />
+                Log Out of All Devices
+              </Button>
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </DashboardLayout>
+  )
+}
+
