@@ -1,13 +1,14 @@
 "use client"
 
-import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from "react"
-import { createFormulaEngine, FormulaEngine, SpreadsheetData as FormulaData } from "@/lib/formula"
-import debounce from 'lodash/debounce'
-import * as logger from '@/lib/logger'
-
-// Maximum number of cells to update in a single operation to prevent freezing
-const MAX_FORMULA_ITERATIONS = 100;
-const FORMULA_UPDATE_DELAY = 300; // ms delay for debouncing
+import { createContext, useContext, useState, useCallback, type ReactNode, useRef, useEffect } from "react"
+import { FormulaParser } from "@/lib/spreadsheet/FormulaParser"
+import { useFormulaCalculation } from "@/hooks/useFormulaCalculation"
+import {
+  loadSpreadsheetData,
+  loadSpreadsheetTitle,
+  saveSpreadsheetData,
+  saveSpreadsheetTitle
+} from "@/lib/spreadsheet/storage"
 
 type CellFormat = {
   bold?: boolean
@@ -29,7 +30,7 @@ type Cell = {
   format?: CellFormat
 }
 
-type Cells = {
+export type Cells = {
   [key: string]: Cell
 }
 
@@ -39,480 +40,498 @@ type CellPosition = {
 }
 
 type Selection = {
-  start: CellPosition
-  end: CellPosition
-}
+  start: { row: number; col: number }
+  end: { row: number; col: number }
+} | null
 
-type ClipboardData = {
+// For undo/redo functionality
+type HistoryAction = {
   cells: Cells
+  activeCell: string | null
   selection: Selection
 }
 
 type SpreadsheetContextType = {
   cells: Cells
   activeCell: string | null
-  selection: Selection | null
-  clipboard: ClipboardData | null
+  selection: Selection
   title: string
   setTitle: (title: string) => void
   updateCell: (cellId: string, value: string) => void
-  updateCellFormat: (cellId: string, format: string, value: any) => void
-  updateMultipleCellsFormat: (format: string, value: any) => void
+  updateCellFormat: (cellId: string, format: Partial<CellFormat>) => void
+  updateMultipleCellsFormat: (cellIds: string[], format: Partial<CellFormat>) => void
   setActiveCell: (cellId: string | null) => void
-  setSelection: (selection: Selection | null) => void
+  isCellFormula: (cellId: string) => boolean
+  getCellError: (cellId: string) => string | undefined
+  setSelection: (selection: Selection) => void
   copySelection: () => void
   cutSelection: () => void
   pasteSelection: () => void
   deleteSelection: () => void
+  undo: () => void
+  redo: () => void
   getCellId: (position: CellPosition) => string
   getCellPosition: (cellId: string) => CellPosition
   getSelectedCells: () => string[]
-  // Formula-related methods
-  isCellFormula: (cellId: string) => boolean
   getCellDisplayValue: (cellId: string) => string
-  getCellError: (cellId: string) => string | undefined
-  // Debug mode
-  debugMode: boolean
-  toggleDebugMode: () => void
 }
 
-const SpreadsheetContext = createContext<SpreadsheetContextType | undefined>(undefined)
+const SpreadsheetContext = createContext<SpreadsheetContextType | null>(null)
+
+export function useSpreadsheet() {
+  const context = useContext(SpreadsheetContext)
+  if (!context) {
+    throw new Error("useSpreadsheet must be used within a SpreadsheetProvider")
+  }
+  return context
+}
 
 export function SpreadsheetProvider({ children }: { children: ReactNode }) {
-  const [cells, setCells] = useState<Cells>({})
-  const [activeCell, setActiveCell] = useState<string | null>(null)
-  const [selection, setSelection] = useState<Selection | null>(null)
-  const [clipboard, setClipboard] = useState<ClipboardData | null>(null)
-  const [title, setTitle] = useState<string>("Untitled Spreadsheet")
-  const [debugMode, setDebugMode] = useState<boolean>(false)
+  // Initialize state with empty values first
+  const [cells, setCells] = useState<Cells>({});
+  const [title, setTitle] = useState<string>("Untitled Spreadsheet");
+  const [activeCell, setActiveCell] = useState<string | null>(null);
+  const [selection, setSelection] = useState<Selection>(null);
   
-  // Formula engine reference
-  const formulaEngineRef = useRef<FormulaEngine | null>(null)
-  
-  // Initialize formula engine when component mounts
+  // Load data from localStorage after mount
   useEffect(() => {
-    logger.info(logger.LogCategory.FORMULA, 'Initializing formula engine');
-    formulaEngineRef.current = createFormulaEngine(0);
-  }, []);
-  
-  // Toggle debug mode
-  const toggleDebugMode = useCallback(() => {
-    setDebugMode(prev => {
-      const newValue = !prev;
-      logger.setDebugMode(newValue);
-      logger.info(`Debug mode ${newValue ? 'enabled' : 'disabled'}`);
-      return newValue;
-    });
+    setCells(loadSpreadsheetData());
+    setTitle(loadSpreadsheetTitle());
   }, []);
 
-  // Helper function to convert between cell ID (e.g., "A1") and position ({row: 0, col: 0})
-  const getCellId = useCallback((position: CellPosition): string => {
-    const colLetter = String.fromCharCode(65 + position.col)
-    return `${colLetter}${position.row + 1}`
-  }, []);
+  // For undo/redo functionality
+  const [history, setHistory] = useState<HistoryAction[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [clipboard, setClipboard] = useState<{cells: Cells, startCell: string} | null>(null);
+  const isUndoRedoOperation = useRef(false);
 
-  const getCellPosition = useCallback((cellId: string): CellPosition => {
-    const match = cellId.match(/([A-Z]+)(\d+)/)
-    if (!match) return { row: 0, col: 0 }
+  // Add formula calculation hook
+  const { updateDependencies, calculateFormula, getAffectedCells } = useFormulaCalculation();
 
-    const colLetter = match[1]
-    const rowNum = Number.parseInt(match[2])
-
-    const col = colLetter.charCodeAt(0) - 65
-    const row = rowNum - 1
-
-    return { row, col }
-  }, []);
-
-  // Get all cell IDs in the current selection
-  const getSelectedCells = useCallback((): string[] => {
-    if (!selection) return activeCell ? [activeCell] : []
-
-    const selectedCells: string[] = []
-    const startRow = Math.min(selection.start.row, selection.end.row)
-    const endRow = Math.max(selection.start.row, selection.end.row)
-    const startCol = Math.min(selection.start.col, selection.end.col)
-    const endCol = Math.max(selection.start.col, selection.end.col)
-
-    for (let row = startRow; row <= endRow; row++) {
-      for (let col = startCol; col <= endCol; col++) {
-        selectedCells.push(getCellId({ row, col }))
-      }
-    }
-
-    return selectedCells
-  }, [selection, activeCell, getCellId]);
-
-  // Process formula - debounced to avoid excessive recalculations
-  const processFormula = useCallback((cellId: string, formula: string) => {
-    logger.debug(logger.LogCategory.FORMULA, `Processing formula for ${cellId}: ${formula}`);
-    
-    if (!formulaEngineRef.current) {
-      logger.error(logger.LogCategory.FORMULA, 'Formula engine not initialized');
-      return;
-    }
-    
-    try {
-      // Update the cell in the formula engine
-      const updatedData = formulaEngineRef.current.updateCell(cellId, formula, true);
-      
-      // Get the calculated value from the updated data
-      const calculatedValue = updatedData[cellId]?.calculatedValue;
-      const error = updatedData[cellId]?.error;
-      
-      // Update the cell in the grid
-      setCells(prev => ({
-        ...prev,
-        [cellId]: {
-          ...prev[cellId],
-          formula,
-          calculatedValue,
-          error,
-          format: {
-            ...prev[cellId]?.format,
-            type: "formula"
-          }
-        }
-      }));
-      
-      // Update any dependent cells that might have changed
-      Object.entries(updatedData).forEach(([id, cellData]) => {
-        // Skip the cell we just updated directly
-        if (id === cellId) return;
-        
-        // Type assertion to access formula engine cell data
-        const engineCell = cellData as { 
-          value: string; 
-          formula?: string; 
-          calculatedValue?: any; 
-          error?: string;
-        };
-        
-        // Only update cells that have formulas
-        if (engineCell.formula) {
-          // Get the current UI cell state to merge with engine updates
-          const currentCell = cells[id] || {};
-          
-          // Update the UI state for this dependent cell
-          setCells(prev => ({
-            ...prev,
-            [id]: {
-              ...currentCell,
-              // Ensure formula is preserved
-              formula: engineCell.formula,
-              // Update with the new calculated value
-              calculatedValue: engineCell.calculatedValue,
-              error: engineCell.error,
-              // Ensure format shows this is a formula
-              format: {
-                ...currentCell.format,
-                type: "formula"
-              }
-            }
-          }));
-        }
-      });
-    } catch (error) {
-      // Handle formula parsing errors
-      logger.error(logger.LogCategory.FORMULA, `Error processing formula for ${cellId}:`, error);
-      
-      setCells(prev => ({
-        ...prev,
-        [cellId]: {
-          ...prev[cellId],
-          formula,
-          error: '#ERROR!',
-          format: {
-            ...prev[cellId]?.format,
-            type: "formula"
-          }
-        }
-      }));
+  // Save cells to localStorage whenever they change
+  useEffect(() => {
+    // Don't save initial empty state
+    if (Object.keys(cells).length > 0) {
+      saveSpreadsheetData(cells);
     }
   }, [cells]);
-  
-  // Debounce the formula calculation to avoid excessive recalculations
-  const debouncedFormulaCalculation = useCallback(
-    debounce(processFormula, 100),
-    [processFormula]
-  );
 
-  // Update cell value
+  // Save title to localStorage whenever it changes
+  useEffect(() => {
+    if (title !== "Untitled Spreadsheet") {
+      saveSpreadsheetTitle(title);
+    }
+  }, [title]);
+
+  // Wrap setTitle to handle both state and storage
+  const handleSetTitle = useCallback((newTitle: string) => {
+    setTitle(newTitle);
+  }, []);
+
+  // Save current state to history
+  const saveToHistory = useCallback(() => {
+    if (isUndoRedoOperation.current) {
+      isUndoRedoOperation.current = false
+      return
+    }
+
+    const currentState: HistoryAction = {
+      cells: { ...cells },
+      activeCell,
+      selection
+    }
+
+    setHistory(prev => {
+      // If we're not at the end of history, truncate it
+      const newHistory = prev.slice(0, historyIndex + 1)
+      return [...newHistory, currentState]
+    })
+    
+    setHistoryIndex(prev => prev + 1)
+  }, [cells, activeCell, selection, historyIndex])
+
+  // Update cell with formula support
   const updateCell = useCallback((cellId: string, value: string) => {
-    logger.debug(logger.LogCategory.STATE, `Updating cell ${cellId} with value: ${value}`);
+    saveToHistory()
     
-    // Check if it's a formula (starts with '=')
-    const isFormula = value.startsWith('=');
-    
-    // Create a batch update for all cells that need to change
-    const cellUpdates: Cells = {};
-    
-    // Add the direct cell update first
-    if (!cells[cellId]) {
-      // Create a new cell
-      cellUpdates[cellId] = {
-        value: value,
-        ...(isFormula && { 
-          formula: value,
-          format: { type: "formula" }
-        })
-      };
-    } else {
-      // Update existing cell
-      if (isFormula) {
-        // Formula cell
-        cellUpdates[cellId] = {
-          ...cells[cellId],
-          value,
-          formula: value,
-          // Clear previous calculation results until recalculated
-          calculatedValue: undefined,
-          error: undefined,
-          format: {
-            ...cells[cellId]?.format,
-            type: "formula"
+    setCells(prev => {
+      const newCells = { ...prev }
+      
+      // Check if the value is a formula
+      if (value.startsWith('=')) {
+        try {
+          // Parse the formula
+          const formula = FormulaParser.parseFormula(value)
+          if (!formula) {
+            throw new Error('Invalid formula')
           }
-        };
-      } else {
-        // Regular cell - remove formula properties if they existed
-        const { formula, calculatedValue, error, ...restCell } = cells[cellId];
-        cellUpdates[cellId] = {
-          ...restCell,
-          value,
-          format: {
-            ...cells[cellId]?.format,
-            type: cells[cellId]?.format?.type === "formula" ? undefined : cells[cellId]?.format?.type
-          }
-        };
-      }
-    }
-    
-    // First update with just the direct cell change - don't wait for formula calculation
-    setCells(prev => ({
-      ...prev,
-      ...cellUpdates
-    }));
-    
-    // Update formula engine with the new value regardless of whether it's a formula or not
-    if (formulaEngineRef.current) {
-      if (isFormula) {
-        // Process formula with formula engine
-        debouncedFormulaCalculation(cellId, value);
-      } else {
-        // Update non-formula cell value in the formula engine
-        // This ensures the formula engine has access to the latest cell values
-        const updatedData = formulaEngineRef.current.updateCell(cellId, value, false);
-        
-        // Find and update all cells that have been recalculated 
-        const formulaUpdates: Cells = {};
-        
-        Object.entries(updatedData).forEach(([id, cellData]) => {
-          // Skip the cell we just updated directly
-          if (id === cellId) return;
-          
-          // Type assertion to access formula engine cell data
-          const engineCell = cellData as { 
-            value: string; 
-            formula?: string; 
-            calculatedValue?: any; 
-            error?: string;
-          };
-          
-          // Only update cells that have formulas
-          if (engineCell.formula) {
-            // Get the current UI cell state to merge with engine updates
-            const currentCell = cells[id] || {};
-            
-            formulaUpdates[id] = {
-              ...currentCell,
-              // Ensure formula is preserved
-              formula: engineCell.formula,
-              // Update with the new calculated value
-              calculatedValue: engineCell.calculatedValue,
-              error: engineCell.error,
-              // Ensure format shows this is a formula
-              format: {
-                ...currentCell.format,
-                type: "formula"
-              }
-            };
-          }
-        });
-        
-        // Apply all formula updates in a single state update
-        if (Object.keys(formulaUpdates).length > 0) {
-          logger.debug(logger.LogCategory.STATE, 
-            `Updating ${Object.keys(formulaUpdates).length} formula cells after changing ${cellId}`);
-          
-          setCells(prev => ({
-            ...prev,
-            ...formulaUpdates
-          }));
-        }
-      }
-    }
-  }, [cells, debouncedFormulaCalculation]);
 
-  const updateCellFormat = useCallback((cellId: string, format: string, value: any) => {
-    setCells((prev) => ({
+          // Update dependencies
+          updateDependencies(cellId, formula)
+
+          // Calculate the formula value
+          const getCellValue = (depCellId: string) => {
+            const numValue = Number(newCells[depCellId]?.value || '0')
+            if (isNaN(numValue)) {
+              throw new Error(`Invalid number in cell ${depCellId}`)
+            }
+            return numValue
+          }
+
+          const { value: calculatedValue, error } = calculateFormula(formula, getCellValue)
+
+          newCells[cellId] = {
+            ...newCells[cellId],
+            value: value,
+            formula: value,
+            calculatedValue,
+            error
+          }
+
+          // Recalculate dependent cells
+          const affectedCells = getAffectedCells(cellId)
+          affectedCells.forEach(affectedCellId => {
+            if (affectedCellId === cellId) return // Skip the current cell
+            
+            const affectedCell = newCells[affectedCellId]
+            if (!affectedCell?.formula) return // Skip non-formula cells
+
+            const affectedFormula = FormulaParser.parseFormula(affectedCell.formula)
+            if (!affectedFormula) return
+
+            try {
+              const { value: newValue, error } = calculateFormula(affectedFormula, getCellValue)
+              newCells[affectedCellId] = {
+                ...affectedCell,
+                calculatedValue: newValue,
+                error
+              }
+            } catch (err) {
+              newCells[affectedCellId] = {
+                ...affectedCell,
+                calculatedValue: '#ERROR!',
+                error: err instanceof Error ? err.message : 'Calculation error'
+              }
+            }
+          })
+        } catch (err) {
+          newCells[cellId] = {
+            ...newCells[cellId],
+            value: value,
+            formula: value,
+            calculatedValue: '#ERROR!',
+            error: err instanceof Error ? err.message : 'Formula error'
+          }
+        }
+      } else {
+        // Regular value update
+        newCells[cellId] = {
+          ...newCells[cellId],
+          value: value,
+          formula: undefined,
+          calculatedValue: undefined,
+          error: undefined
+        }
+
+        // Recalculate dependent cells since this cell's value changed
+        const affectedCells = getAffectedCells(cellId)
+        affectedCells.forEach(affectedCellId => {
+          const affectedCell = newCells[affectedCellId]
+          if (!affectedCell?.formula) return
+
+          const affectedFormula = FormulaParser.parseFormula(affectedCell.formula)
+          if (!affectedFormula) return
+
+          try {
+            const getCellValue = (depCellId: string) => {
+              const numValue = Number(newCells[depCellId]?.value || '0')
+              if (isNaN(numValue)) {
+                throw new Error(`Invalid number in cell ${depCellId}`)
+              }
+              return numValue
+            }
+
+            const { value: newValue, error } = calculateFormula(affectedFormula, getCellValue)
+            newCells[affectedCellId] = {
+              ...affectedCell,
+              calculatedValue: newValue,
+              error
+            }
+          } catch (err) {
+            newCells[affectedCellId] = {
+              ...affectedCell,
+              calculatedValue: '#ERROR!',
+              error: err instanceof Error ? err.message : 'Calculation error'
+            }
+          }
+        })
+      }
+      
+      return newCells
+    })
+  }, [saveToHistory, updateDependencies, calculateFormula, getAffectedCells])
+
+  const updateCellFormat = useCallback((cellId: string, format: Partial<CellFormat>) => {
+    saveToHistory()
+    
+    setCells(prev => ({
       ...prev,
       [cellId]: {
         ...prev[cellId],
-        value: prev[cellId]?.value || "",
         format: {
           ...prev[cellId]?.format,
-          [format]: value,
-        },
-      },
+          ...format
+        }
+      }
     }))
-  }, []);
+  }, [saveToHistory])
 
-  // Update format for all cells in the current selection
-  const updateMultipleCellsFormat = useCallback((format: string, value: any) => {
-    const selectedCellIds = getSelectedCells()
-    if (selectedCellIds.length === 0) return
-
-    setCells((prev) => {
+  const updateMultipleCellsFormat = useCallback((cellIds: string[], format: Partial<CellFormat>) => {
+    saveToHistory()
+    
+    setCells(prev => {
       const newCells = { ...prev }
       
-      selectedCellIds.forEach((cellId) => {
+      cellIds.forEach(cellId => {
         newCells[cellId] = {
           ...newCells[cellId],
-          value: newCells[cellId]?.value || "",
           format: {
             ...newCells[cellId]?.format,
-            [format]: value,
-          },
+            ...format
+          }
         }
       })
       
       return newCells
     })
-  }, [getSelectedCells]);
+  }, [saveToHistory])
 
-  // Copy the current selection to clipboard
+  const isCellFormula = useCallback((cellId: string) => {
+    return cells[cellId]?.formula !== undefined && cells[cellId]?.formula.startsWith('=')
+  }, [cells])
+
+  const getCellError = useCallback((cellId: string) => {
+    return cells[cellId]?.error
+  }, [cells])
+
+  // Get cellId from row and column position (e.g., A1, B2, etc.)
+  const getCellId = useCallback((position: CellPosition) => {
+    const column = String.fromCharCode(65 + position.col); // A, B, C, ...
+    const row = position.row + 1; // 1-indexed for rows
+    return `${column}${row}`;
+  }, []);
+
+  // Get row and column position from cellId (e.g., A1 -> {row: 0, col: 0})
+  const getCellPosition = useCallback((cellId: string) => {
+    const column = cellId.charAt(0);
+    const row = cellId.substring(1);
+    return {
+      row: parseInt(row) - 1, // 0-indexed for internal use
+      col: column.charCodeAt(0) - 65, // A=0, B=1, ...
+    };
+  }, []);
+
+  // Get all cells within the current selection
+  const getSelectedCells = useCallback(() => {
+    if (!selection) return [];
+    
+    const startRow = Math.min(selection.start.row, selection.end.row);
+    const endRow = Math.max(selection.start.row, selection.end.row);
+    const startCol = Math.min(selection.start.col, selection.end.col);
+    const endCol = Math.max(selection.start.col, selection.end.col);
+    
+    const selected: string[] = [];
+    
+    for (let row = startRow; row <= endRow; row++) {
+      for (let col = startCol; col <= endCol; col++) {
+        selected.push(getCellId({ row, col }));
+      }
+    }
+    
+    return selected;
+  }, [selection, getCellId]);
+
+  // Get display value for a cell (calculated value for formulas, or raw value)
+  const getCellDisplayValue = useCallback((cellId: string) => {
+    if (isCellFormula(cellId)) {
+      return cells[cellId]?.calculatedValue !== undefined 
+        ? String(cells[cellId].calculatedValue) 
+        : cells[cellId]?.error || '';
+    }
+    return cells[cellId]?.value || '';
+  }, [cells, isCellFormula]);
+
+  // Copy selected cells to clipboard
   const copySelection = useCallback(() => {
-    if (!selection) return;
+    if (!selection || !activeCell) return;
     
-    logger.debug(logger.LogCategory.UI, "Copying selection", selection);
+    const selectedCells = getSelectedCells();
+    if (selectedCells.length === 0) return;
     
-    const selectedCellIds = getSelectedCells();
     const clipboardCells: Cells = {};
     
-    selectedCellIds.forEach((cellId) => {
+    selectedCells.forEach(cellId => {
       if (cells[cellId]) {
-        clipboardCells[cellId] = { ...cells[cellId] }
+        clipboardCells[cellId] = { ...cells[cellId] };
       }
-    })
-
+    });
+    
     setClipboard({
       cells: clipboardCells,
-      selection: selection || {
-        start: getCellPosition(activeCell!),
-        end: getCellPosition(activeCell!),
-      },
-    })
-  }, [selection, activeCell, cells, getSelectedCells, getCellPosition]);
+      startCell: selectedCells[0]
+    });
+    
+    // Also copy to system clipboard if possible
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        // Just a simple text representation for system clipboard
+        const text = selectedCells.map(id => cells[id]?.value || '').join('\t');
+        navigator.clipboard.writeText(text);
+      } catch (error) {
+        console.error('Failed to copy to system clipboard:', error);
+      }
+    }
+    
+    console.log('Copied cells to clipboard:', selectedCells);
+  }, [selection, activeCell, cells, getSelectedCells]);
 
-  // Delete content from selected cells
-  const deleteSelection = useCallback(() => {
-    if (!selection && !activeCell) return
-
-    const selectedCellIds = getSelectedCells()
-
-    setCells((prev) => {
-      const newCells = { ...prev }
-
-      selectedCellIds.forEach((cellId) => {
-        if (newCells[cellId]) {
-          const { formula, calculatedValue, error, ...rest } = newCells[cellId];
-          newCells[cellId] = {
-            ...rest,
-            value: "",
-            format: {
-              ...newCells[cellId].format,
-              type: newCells[cellId].format?.type === "formula" ? undefined : newCells[cellId].format?.type
-            }
-          }
-        }
-      })
-
-      return newCells
-    })
-  }, [selection, activeCell, getSelectedCells]);
-
-  // Cut the current selection (copy and then clear)
+  // Cut selected cells (copy + delete)
   const cutSelection = useCallback(() => {
-    if (!selection && !activeCell) return
+    if (!selection) return;
+    
+    // First copy
+    copySelection();
+    
+    // Then delete
+    saveToHistory();
+    
+    const selectedCells = getSelectedCells();
+    setCells(prev => {
+      const newCells = { ...prev };
+      
+      selectedCells.forEach(cellId => {
+        if (newCells[cellId]) {
+          newCells[cellId] = {
+            ...newCells[cellId],
+            value: '',
+            formula: undefined,
+            calculatedValue: undefined,
+            error: undefined
+          };
+        }
+      });
+      
+      return newCells;
+    });
+    
+    console.log('Cut cells:', selectedCells);
+  }, [selection, copySelection, getSelectedCells, saveToHistory]);
 
-    copySelection()
-    deleteSelection()
-  }, [selection, activeCell, copySelection, deleteSelection]);
-
-  // Paste clipboard content to the current position
+  // Paste from clipboard to current active cell
   const pasteSelection = useCallback(() => {
-    if (!clipboard || !activeCell) return;
+    if (!activeCell || !clipboard) return;
     
-    logger.debug(logger.LogCategory.UI, "Pasting from clipboard at cell", activeCell);
+    saveToHistory();
     
-    const targetPosition = selection ? selection.start : getCellPosition(activeCell!)
-    const clipboardSize = {
-      rows: Math.abs(clipboard.selection.end.row - clipboard.selection.start.row) + 1,
-      cols: Math.abs(clipboard.selection.end.col - clipboard.selection.start.col) + 1,
-    }
-
-    const clipboardStartRow = Math.min(clipboard.selection.start.row, clipboard.selection.end.row)
-    const clipboardStartCol = Math.min(clipboard.selection.start.col, clipboard.selection.end.col)
-
-    setCells((prev) => {
-      const newCells = { ...prev }
-
-      // Map each cell in the clipboard to a new position
-      Object.entries(clipboard.cells).forEach(([cellId, cell]) => {
-        const position = getCellPosition(cellId)
-        const relativeRow = position.row - clipboardStartRow
-        const relativeCol = position.col - clipboardStartCol
-
-        const newPosition = {
-          row: targetPosition.row + relativeRow,
-          col: targetPosition.col + relativeCol,
+    const targetPos = getCellPosition(activeCell);
+    const sourcePos = getCellPosition(clipboard.startCell);
+    
+    // Calculate offsets
+    const rowOffset = targetPos.row - sourcePos.row;
+    const colOffset = targetPos.col - sourcePos.col;
+    
+    setCells(prev => {
+      const newCells = { ...prev };
+      
+      // For each cell in clipboard
+      Object.entries(clipboard.cells).forEach(([cellId, cellData]) => {
+        const cellPos = getCellPosition(cellId);
+        
+        // Calculate new position
+        const newRow = cellPos.row + rowOffset;
+        const newCol = cellPos.col + colOffset;
+        
+        // Skip if out of bounds (typical grid is 0-99 rows, 0-25 cols)
+        if (newRow < 0 || newRow > 99 || newCol < 0 || newCol > 25) {
+          return;
         }
-
-        // Ensure we're not pasting outside the grid
-        if (newPosition.row >= 0 && newPosition.row < 100 && newPosition.col >= 0 && newPosition.col < 26) {
-          const newCellId = getCellId(newPosition)
-          newCells[newCellId] = { ...cell }
-        }
-      })
-
-      return newCells
-    })
+        
+        const newCellId = getCellId({ row: newRow, col: newCol });
+        
+        // Copy data to new position
+        newCells[newCellId] = {
+          ...cellData,
+          // Adjust formula references if needed (simplified, would need more complex logic for real formulas)
+          formula: cellData.formula ? cellData.formula : undefined
+        };
+      });
+      
+      return newCells;
+    });
     
-    // Recalculate formulas in the pasted content
-    if (formulaEngineRef.current) {
-      // Get all cells that were just pasted
-      // This could be optimized to only recalculate formulas
-      setTimeout(() => {
-        Object.entries(clipboard.cells).forEach(([cellId, cell]) => {
-          if (cell.formula) {
-            const position = getCellPosition(cellId)
-            const relativeRow = position.row - clipboardStartRow
-            const relativeCol = position.col - clipboardStartCol
-            
-            const newPosition = {
-              row: targetPosition.row + relativeRow,
-              col: targetPosition.col + relativeCol,
-            }
-            
-            if (newPosition.row >= 0 && newPosition.row < 100 && newPosition.col >= 0 && newPosition.col < 26) {
-              const newCellId = getCellId(newPosition)
-              updateCell(newCellId, cell.formula);
-            }
-          }
-        });
-      }, 0);
+    console.log('Pasted from clipboard');
+  }, [activeCell, clipboard, getCellPosition, getCellId, saveToHistory]);
+
+  // Delete content of selected cells
+  const deleteSelection = useCallback(() => {
+    if (!selection) return;
+    
+    saveToHistory();
+    
+    const selectedCells = getSelectedCells();
+    
+    setCells(prev => {
+      const newCells = { ...prev };
+      
+      selectedCells.forEach(cellId => {
+        if (newCells[cellId]) {
+          newCells[cellId] = {
+            ...newCells[cellId],
+            value: '',
+            formula: undefined,
+            calculatedValue: undefined,
+            error: undefined
+          };
+        } else {
+          newCells[cellId] = { value: '' };
+        }
+      });
+      
+      return newCells;
+    });
+    
+    console.log('Deleted selection:', selectedCells);
+  }, [selection, getSelectedCells, saveToHistory]);
+
+  // Undo last action
+  const undo = useCallback(() => {
+    if (historyIndex > 0) {
+      isUndoRedoOperation.current = true
+      
+      const prevState = history[historyIndex - 1]
+      setCells(prevState.cells)
+      setActiveCell(prevState.activeCell)
+      setSelection(prevState.selection)
+      
+      setHistoryIndex(prev => prev - 1)
+      console.log('Undo operation')
     }
-  }, [clipboard, selection, activeCell, getCellPosition, getCellId, updateCell]);
+  }, [history, historyIndex])
+
+  // Redo previously undone action
+  const redo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      isUndoRedoOperation.current = true
+      
+      const nextState = history[historyIndex + 1]
+      setCells(nextState.cells)
+      setActiveCell(nextState.activeCell)
+      setSelection(nextState.selection)
+      
+      setHistoryIndex(prev => prev + 1)
+      console.log('Redo operation')
+    }
+  }, [history, historyIndex])
 
   return (
     <SpreadsheetContext.Provider
@@ -520,74 +539,28 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
         cells,
         activeCell,
         selection,
-        clipboard,
         title,
-        setTitle,
+        setTitle: handleSetTitle,
         updateCell,
         updateCellFormat,
         updateMultipleCellsFormat,
         setActiveCell,
+        isCellFormula,
+        getCellError,
         setSelection,
         copySelection,
         cutSelection,
         pasteSelection,
         deleteSelection,
+        undo,
+        redo,
         getCellId,
         getCellPosition,
         getSelectedCells,
-        isCellFormula: (cellId: string) => cells[cellId]?.formula !== undefined,
-        getCellDisplayValue: (cellId: string) => {
-          const cell = cells[cellId];
-          if (!cell) return "";
-          
-          // If the cell has an error, display the error
-          if (cell.error) {
-            return cell.error;
-          }
-          
-          // If it's a formula cell, return the calculated value
-          if (cell.formula) {
-            // If we have a calculated value, display it
-            if (cell.calculatedValue !== undefined) {
-              // Handle different types of values
-              if (cell.calculatedValue === null) return "";
-              if (typeof cell.calculatedValue === "object") {
-                if (cell.calculatedValue.error) return cell.calculatedValue.error;
-                if (Array.isArray(cell.calculatedValue)) {
-                  const firstValue = cell.calculatedValue[0]?.[0];
-                  return firstValue !== undefined ? String(firstValue) : "";
-                }
-              }
-              return String(cell.calculatedValue);
-            }
-            
-            // If showing formula in the cell, display the formula itself in the editor
-            if (activeCell === cellId) {
-              return cell.formula;
-            }
-            
-            // If no calculated value yet, show placeholder
-            return "Calculating...";
-          }
-          
-          // For regular cells, just return the value
-          return cell.value;
-        },
-        getCellError: (cellId: string) => cells[cellId]?.error,
-        debugMode,
-        toggleDebugMode,
+        getCellDisplayValue
       }}
     >
       {children}
     </SpreadsheetContext.Provider>
   )
-}
-
-export function useSpreadsheet() {
-  const context = useContext(SpreadsheetContext)
-  if (context === undefined) {
-    throw new Error("useSpreadsheet must be used within a SpreadsheetProvider")
-  }
-  return context
-}
-
+} 

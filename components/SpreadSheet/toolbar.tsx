@@ -15,7 +15,6 @@ import {
   PaintBucket,
 } from "lucide-react"
 import { Separator } from "@/components/ui/separator"
-import { useSpreadsheet } from "@/context/spreadsheet-context"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Tooltip,
@@ -23,6 +22,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { useSpreadsheet } from "@/context/spreadsheet-context"
 
 export default function Toolbar() {
   const { 
@@ -30,18 +30,25 @@ export default function Toolbar() {
     cells, 
     updateCellFormat, 
     updateMultipleCellsFormat,
-    selection
+    selection,
+    getSelectedCells
   } = useSpreadsheet()
 
   const handleFormatChange = (format: string, value: any) => {
     if (!activeCell) return
     
     // If there's a selection with multiple cells, apply to all selected cells
-    if (selection && (selection.start.row !== selection.end.row || selection.start.col !== selection.end.col)) {
-      updateMultipleCellsFormat(format, value)
+    if (selection) {
+      const selectedCells = getSelectedCells()
+      if (selectedCells.length > 0) {
+        updateMultipleCellsFormat(selectedCells, { [format]: value })
+      } else {
+        // Otherwise, just update the active cell
+        updateCellFormat(activeCell, { [format]: value })
+      }
     } else {
-      // Otherwise, just update the active cell
-      updateCellFormat(activeCell, format, value)
+      // No selection, just update the active cell
+      updateCellFormat(activeCell, { [format]: value })
     }
   }
 

@@ -7,6 +7,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Sparkles, Maximize2, Minimize2 } from "lucide-react"
 import { useSpreadsheet } from "@/context/spreadsheet-context"
 
+
 export default function AIAssistantPanel() {
   const [prompt, setPrompt] = useState("")
   const [response, setResponse] = useState("")

@@ -6,7 +6,8 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { LayoutGrid, FileSpreadsheet, Settings, Menu, X, ChevronDown, Bell, User } from "lucide-react"
+import { LayoutGrid, FileSpreadsheet, Settings, Menu, X, ChevronDown, Bell } from "lucide-react"
+import { UserButton, useUser } from "@clerk/nextjs"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,6 +25,7 @@ interface DashboardLayoutProps {
 export default function DashboardLayout({ children, showFullHeader = true }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const pathname = usePathname()
+  const { user } = useUser();
 
   useEffect(() => {
     // Automatically close sidebar when on spreadsheet pages
@@ -81,33 +83,12 @@ export default function DashboardLayout({ children, showFullHeader = true }: Das
           </nav>
 
           <div className="p-4 border-t border-gray-200">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="w-full justify-between">
-                  <div className="flex items-center">
-                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center mr-2">
-                      <User className="h-4 w-4 text-gray-600" />
-                    </div>
-                    <span>John Doe</span>
-                  </div>
-                  <ChevronDown className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <User className="h-4 w-4 mr-2" />
-                  Profile
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Settings className="h-4 w-4 mr-2" />
-                  Settings
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem>Log out</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div className="flex items-center justify-between w-full p-2">
+              <div className="flex items-center gap-2">
+                <UserButton />
+                <span className="text-sm font-medium">{user?.fullName || user?.username}</span>
+              </div>
+            </div>
           </div>
         </div>
       </aside>
@@ -127,29 +108,7 @@ export default function DashboardLayout({ children, showFullHeader = true }: Das
               <Button variant="ghost" size="icon">
                 <Bell className="h-5 w-5" />
               </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="rounded-full">
-                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
-                      <User className="h-4 w-4 text-gray-600" />
-                    </div>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem>
-                    <User className="h-4 w-4 mr-2" />
-                    Profile
-                  </DropdownMenuItem>
-                  <DropdownMenuItem>
-                    <Settings className="h-4 w-4 mr-2" />
-                    Settings
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem>Log out</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <UserButton afterSignOutUrl="/" />
             </div>
           </header>
         )}

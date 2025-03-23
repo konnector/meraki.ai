@@ -1,8 +1,8 @@
 "use client"
 
-import { useSpreadsheet } from "@/context/spreadsheet-context"
 import { useRef, useState, useEffect, type MouseEvent, type KeyboardEvent, type ChangeEvent } from "react"
 import { cn } from "@/lib/utils"
+import { useSpreadsheet } from "@/context/spreadsheet-context"
 
 // Add global styles to prevent text selection during cell selection
 const preventSelectionStyle = {
@@ -29,6 +29,8 @@ export default function SpreadsheetGrid() {
     getSelectedCells,
     getCellDisplayValue,
     isCellFormula,
+    undo,
+    redo,
   } = useSpreadsheet()
 
   const gridRef = useRef<HTMLDivElement>(null)
@@ -69,18 +71,35 @@ export default function SpreadsheetGrid() {
       if (e.ctrlKey && e.key === "c") {
         e.preventDefault()
         copySelection()
+        console.log("Copy shortcut triggered")
       }
 
       // Cut (Ctrl+X)
       if (e.ctrlKey && e.key === "x") {
         e.preventDefault()
         cutSelection()
+        console.log("Cut shortcut triggered")
       }
 
       // Paste (Ctrl+V)
       if (e.ctrlKey && e.key === "v") {
         e.preventDefault()
         pasteSelection()
+        console.log("Paste shortcut triggered")
+      }
+
+      // Undo (Ctrl+Z)
+      if (e.ctrlKey && e.key === "z") {
+        e.preventDefault()
+        undo()
+        console.log("Undo shortcut triggered")
+      }
+
+      // Redo (Ctrl+Y or Ctrl+Shift+Z)
+      if ((e.ctrlKey && e.key === "y") || (e.ctrlKey && e.shiftKey && e.key === "z")) {
+        e.preventDefault()
+        redo()
+        console.log("Redo shortcut triggered")
       }
 
       // Delete (Delete key)
@@ -101,7 +120,7 @@ export default function SpreadsheetGrid() {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isEditing, copySelection, cutSelection, pasteSelection, deleteSelection, setSelection])
+  }, [isEditing, copySelection, cutSelection, pasteSelection, deleteSelection, setSelection, undo, redo])
 
   // Handle column header click - select entire column
   const handleColumnHeaderClick = (colIndex: number, e: MouseEvent) => {
