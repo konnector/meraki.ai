@@ -64,63 +64,61 @@ export default function SpreadsheetGrid() {
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
-      // Skip if we're editing a cell
-      if (isEditing) return
+      // Ignore if we're editing a cell
+      if (isEditing) return;
 
-      // Copy (Ctrl+C)
-      if (e.ctrlKey && e.key === "c") {
-        e.preventDefault()
-        copySelection()
-        console.log("Copy shortcut triggered")
+      // Undo: Ctrl/Cmd + Z
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      }
+      
+      // Redo: Ctrl/Cmd + Y or Ctrl/Cmd + Shift + Z
+      if ((e.ctrlKey || e.metaKey) && (
+        (e.key.toLowerCase() === 'y' && !e.shiftKey) ||
+        (e.key.toLowerCase() === 'z' && e.shiftKey)
+      )) {
+        e.preventDefault();
+        redo();
       }
 
-      // Cut (Ctrl+X)
-      if (e.ctrlKey && e.key === "x") {
-        e.preventDefault()
-        cutSelection()
-        console.log("Cut shortcut triggered")
+      // Copy: Ctrl/Cmd + C
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        copySelection();
       }
 
-      // Paste (Ctrl+V)
-      if (e.ctrlKey && e.key === "v") {
-        e.preventDefault()
-        pasteSelection()
-        console.log("Paste shortcut triggered")
+      // Cut: Ctrl/Cmd + X
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
+        e.preventDefault();
+        cutSelection();
       }
 
-      // Undo (Ctrl+Z)
-      if (e.ctrlKey && e.key === "z") {
-        e.preventDefault()
-        undo()
-        console.log("Undo shortcut triggered")
+      // Paste: Ctrl/Cmd + V
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        pasteSelection();
       }
 
-      // Redo (Ctrl+Y or Ctrl+Shift+Z)
-      if ((e.ctrlKey && e.key === "y") || (e.ctrlKey && e.shiftKey && e.key === "z")) {
-        e.preventDefault()
-        redo()
-        console.log("Redo shortcut triggered")
+      // Delete: Delete key
+      if (e.key === 'Delete') {
+        e.preventDefault();
+        deleteSelection();
       }
 
-      // Delete (Delete key)
-      if (e.key === "Delete") {
-        e.preventDefault()
-        deleteSelection()
-      }
-
-      // Select all (Ctrl+A)
-      if (e.ctrlKey && e.key === "a") {
-        e.preventDefault()
+      // Select All: Ctrl/Cmd + A
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
         setSelection({
           start: { row: 0, col: 0 },
-          end: { row: 99, col: 25 },
-        })
+          end: { row: 99, col: 25 }
+        });
       }
-    }
+    };
 
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isEditing, copySelection, cutSelection, pasteSelection, deleteSelection, setSelection, undo, redo])
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isEditing, undo, redo, copySelection, cutSelection, pasteSelection, deleteSelection, setSelection]);
 
   // Handle column header click - select entire column
   const handleColumnHeaderClick = (colIndex: number, e: MouseEvent) => {
@@ -199,35 +197,56 @@ export default function SpreadsheetGrid() {
   }
 
   const handleCellMouseDown = (row: number, col: number, e: MouseEvent) => {
-    if (isEditing) return
-    
-    // Prevent browser's default text selection
-    e.preventDefault()
-
-    // Store mouse position for later to detect if user is trying to select or just clicking
-    setMouseDownStartPos({ x: e.clientX, y: e.clientY })
-    
+    // Get the cell ID for the clicked cell
     const cellId = getCellId({ row, col })
-    setActiveCell(cellId)
 
-    // If shift is pressed, extend the current selection
-    if (e.shiftKey && activeCell) {
-      const activePos = getCellPosition(activeCell)
-      setSelection({
-        start: activePos,
-        end: { row, col },
-      })
-      setIsSelecting(true)
-      setSelectionStart({ row, col })
-    } else {
-      // For single click, just set the selection to the clicked cell
+    // If we're currently editing and click a different cell
+    if (isEditing && activeCell !== cellId) {
+      // Save the current edit
+      if (activeCell) {
+        updateCell(activeCell, editValue)
+      }
+      setIsEditing(false)
+      setEditValue("")
+      
+      // Set the new active cell
+      setActiveCell(cellId)
       setSelection({
         start: { row, col },
         end: { row, col },
       })
+      return
+    }
+    
+    // If not editing, proceed with normal selection behavior
+    if (!isEditing) {
+      // Prevent browser's default text selection
+      e.preventDefault()
+
+      // Store mouse position for later to detect if user is trying to select or just clicking
+      setMouseDownStartPos({ x: e.clientX, y: e.clientY })
       
-      // Don't start selection mode immediately, wait to see if user drags
-      setSelectionStart({ row, col })
+      setActiveCell(cellId)
+
+      // If shift is pressed, extend the current selection
+      if (e.shiftKey && activeCell) {
+        const activePos = getCellPosition(activeCell)
+        setSelection({
+          start: activePos,
+          end: { row, col },
+        })
+        setIsSelecting(true)
+        setSelectionStart({ row, col })
+      } else {
+        // For single click, just set the selection to the clicked cell
+        setSelection({
+          start: { row, col },
+          end: { row, col },
+        })
+        
+        // Don't start selection mode immediately, wait to see if user drags
+        setSelectionStart({ row, col })
+      }
     }
 
     console.log(`Cell mouse down at row: ${row}, col: ${col}`);
