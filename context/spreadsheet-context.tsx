@@ -1,9 +1,12 @@
 "use client"
 
-import { createContext, useContext, useState, useCallback, type ReactNode, useRef } from "react"
+import { createContext, useContext, useState, useCallback, type ReactNode, useRef, useEffect } from "react"
 import { FormulaParser } from "@/lib/spreadsheet/FormulaParser"
 import { useFormulaCalculation } from "@/hooks/useFormulaCalculation"
 import { HistoryManager } from "@/lib/spreadsheet/HistoryManager"
+import { getSpreadsheet, deleteSpreadsheet, SpreadsheetData } from "@/lib/supabase/client"
+import { useParams, useRouter } from "next/navigation"
+import { useUser } from "@clerk/nextjs"
 
 type CellFormat = {
   bold?: boolean
@@ -76,23 +79,197 @@ export function useSpreadsheet() {
   return context
 }
 
+async function saveSpreadsheetToAPI(spreadsheetId: string, spreadsheetData: Partial<SpreadsheetData>) {
+  const response = await fetch(`/api/spreadsheets/${spreadsheetId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(spreadsheetData),
+  })
+
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to save spreadsheet')
+  }
+
+  return await response.json()
+}
+
 export function SpreadsheetProvider({ children }: { children: ReactNode }) {
+  const params = useParams()
+  const { user } = useUser()
+  const router = useRouter()
+  const spreadsheetId = params?.id as string
+  const hasInteracted = useRef<boolean>(false)
+  const isLoading = useRef<boolean>(true)
+
+  // Initialize refs
+  const historyManager = useRef<HistoryManager>(new HistoryManager())
+  const isHistoryAction = useRef<boolean>(false)
+  const saveTimeout = useRef<NodeJS.Timeout | undefined>(undefined)
+
   // Initialize state with empty values first
-  const [cells, setCells] = useState<Cells>({});
-  const [title, setTitle] = useState<string>("Untitled Spreadsheet");
-  const [activeCell, setActiveCell] = useState<string | null>(null);
-  const [selection, setSelection] = useState<Selection>(null);
-  const [clipboard, setClipboard] = useState<{cells: Cells, startCell: string} | null>(null);
-  const historyManager = useRef(new HistoryManager());
-  const isHistoryAction = useRef(false);
+  const [cells, setCells] = useState<Cells>({})
+  const [title, setTitle] = useState<string>("Untitled Spreadsheet")
+  const [activeCell, setActiveCell] = useState<string | null>(null)
+  const [selection, setSelection] = useState<Selection>(null)
+  const [clipboard, setClipboard] = useState<{cells: Cells, startCell: string} | null>(null)
 
   // Add formula calculation hook
-  const { updateDependencies, calculateFormula, getAffectedCells } = useFormulaCalculation();
+  const { updateDependencies, calculateFormula, getAffectedCells } = useFormulaCalculation()
 
-  // Wrap setTitle to handle state
+  // Function to check if spreadsheet is unused
+  const isUnused = useCallback(() => {
+    return title === "Untitled Spreadsheet" && 
+           Object.keys(cells).length === 0 && 
+           !hasInteracted.current
+  }, [title, cells])
+
+  // Handle cleanup of unused spreadsheet
+  const handleCleanup = useCallback(async () => {
+    if (spreadsheetId && user && isUnused()) {
+      try {
+        await deleteSpreadsheet(spreadsheetId)
+        router.replace('/dashboard')
+      } catch (error) {
+        console.error('Error deleting unused spreadsheet:', error)
+      }
+    }
+  }, [spreadsheetId, user, isUnused, router])
+
+  // Set up cleanup on page unload/tab close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (isUnused()) {
+        handleCleanup()
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      // Remove the cleanup on unmount - it's causing premature redirects
+      // when components unmount during normal React lifecycle
+      // if (isUnused()) {
+      //   handleCleanup()
+      // }
+    }
+  }, [handleCleanup, isUnused])
+
+  // Load data from Supabase when component mounts
+  useEffect(() => {
+    let mounted = true;
+    let timeoutId: NodeJS.Timeout | null = null;
+    
+    async function loadSpreadsheetData() {
+      if (!spreadsheetId || !user) {
+        isLoading.current = false;
+        return;
+      }
+
+      try {
+        const data = await getSpreadsheet(spreadsheetId);
+        
+        // Only proceed if component is still mounted
+        if (!mounted) return;
+        
+        if (data && data.user_id === user.id) {
+          setCells(data.cells || {});
+          setTitle(data.title || "Untitled Spreadsheet");
+          // If data exists, consider it as interacted
+          if (Object.keys(data.cells || {}).length > 0 || data.title !== "Untitled Spreadsheet") {
+            hasInteracted.current = true;
+          }
+        } else {
+          // If wrong user, redirect to dashboard
+          if (mounted) {
+            // Add a small delay to prevent immediate redirect
+            timeoutId = setTimeout(() => {
+              router.replace('/dashboard');
+            }, 500);
+          }
+        }
+      } catch (error) {
+        // Only proceed if component is still mounted
+        if (!mounted) return;
+        
+        console.error('Error loading spreadsheet:', error);
+        if (error instanceof Error) {
+          if (error.message === 'Spreadsheet not found') {
+            // For missing spreadsheets, just initialize with empty state
+            console.log('Spreadsheet not found, creating new one');
+          } else {
+            // For other errors, redirect to dashboard with a delay
+            if (mounted) {
+              // Add a small delay to prevent immediate redirect
+              timeoutId = setTimeout(() => {
+                router.replace('/dashboard');
+              }, 500);
+            }
+          }
+        }
+      } finally {
+        if (mounted) {
+          isLoading.current = false;
+        }
+      }
+    }
+
+    loadSpreadsheetData();
+    
+    // Cleanup function
+    return () => {
+      mounted = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [spreadsheetId, user, router]);
+
+  // Update the save effect to use the new API
+  useEffect(() => {
+    if (!spreadsheetId || !user || isLoading.current) return
+
+    // Mark as interacted if there are changes
+    if (title !== "Untitled Spreadsheet" || Object.keys(cells).length > 0) {
+      hasInteracted.current = true
+    }
+
+    // Clear any existing timeout
+    if (saveTimeout.current) {
+      clearTimeout(saveTimeout.current)
+    }
+
+    // Only save if there have been interactions
+    if (hasInteracted.current) {
+      saveTimeout.current = setTimeout(async () => {
+        try {
+          await saveSpreadsheetToAPI(spreadsheetId, {
+            id: spreadsheetId,
+            user_id: user.id,
+            title,
+            cells,
+            updated_at: new Date().toISOString()
+          })
+        } catch (error) {
+          console.error('Error saving spreadsheet:', error)
+        }
+      }, 1000)
+    }
+
+    return () => {
+      if (saveTimeout.current) {
+        clearTimeout(saveTimeout.current)
+      }
+    }
+  }, [cells, title, spreadsheetId, user])
+
+  // Wrap setTitle to handle state and mark interaction
   const handleSetTitle = useCallback((newTitle: string) => {
-    setTitle(newTitle);
-  }, []);
+    hasInteracted.current = true
+    setTitle(newTitle)
+  }, [])
 
   // Function to save current state to history
   const saveToHistory = useCallback(() => {
@@ -101,10 +278,10 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
         cells,
         activeCell,
         selection,
-      });
+      })
     }
-    isHistoryAction.current = false;
-  }, [cells, activeCell, selection]);
+    isHistoryAction.current = false
+  }, [cells, activeCell, selection])
 
   // Undo function
   const undo = useCallback(() => {
@@ -112,15 +289,15 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
       cells,
       activeCell,
       selection,
-    });
+    })
 
     if (previousState) {
-      isHistoryAction.current = true;
-      setCells(previousState.cells);
-      setActiveCell(previousState.activeCell);
-      setSelection(previousState.selection);
+      isHistoryAction.current = true
+      setCells(previousState.cells)
+      setActiveCell(previousState.activeCell)
+      setSelection(previousState.selection)
     }
-  }, [cells, activeCell, selection]);
+  }, [cells, activeCell, selection])
 
   // Redo function
   const redo = useCallback(() => {
@@ -128,38 +305,39 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
       cells,
       activeCell,
       selection,
-    });
+    })
 
     if (nextState) {
-      isHistoryAction.current = true;
-      setCells(nextState.cells);
-      setActiveCell(nextState.activeCell);
-      setSelection(nextState.selection);
+      isHistoryAction.current = true
+      setCells(nextState.cells)
+      setActiveCell(nextState.activeCell)
+      setSelection(nextState.selection)
     }
-  }, [cells, activeCell, selection]);
+  }, [cells, activeCell, selection])
 
   // Update the setActiveCell function to not trigger history
   const setActiveCellWithoutHistory = useCallback((cellId: string | null) => {
-    setActiveCell(cellId);
-  }, []);
+    setActiveCell(cellId)
+  }, [])
 
   // Update the setSelection function to not trigger history
   const setSelectionWithoutHistory = useCallback((newSelection: Selection) => {
-    setSelection(newSelection);
-  }, []);
+    setSelection(newSelection)
+  }, [])
 
-  // Update cell with formula support
+  // Update cell with formula support and mark interaction
   const updateCell = useCallback((cellId: string, value: string) => {
+    hasInteracted.current = true
     // Set active cell when updating
-    setActiveCell(cellId);
+    setActiveCell(cellId)
     
     setCells(prev => {
       const newCells = { ...prev }
-      const oldValue = prev[cellId]?.value;
+      const oldValue = prev[cellId]?.value
       
       // Only proceed if the value is actually different
       if (oldValue === value) {
-        return prev;
+        return prev
       }
       
       // Check if the value is a formula
@@ -221,8 +399,8 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
           })
 
           // Save to history after the update
-          setTimeout(() => saveToHistory(), 0);
-          return newCells;
+          setTimeout(() => saveToHistory(), 0)
+          return newCells
         } catch (err) {
           newCells[cellId] = {
             ...newCells[cellId],
@@ -233,8 +411,8 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
           }
           
           // Save to history after the update
-          setTimeout(() => saveToHistory(), 0);
-          return newCells;
+          setTimeout(() => saveToHistory(), 0)
+          return newCells
         }
       } else {
         // Regular value update
@@ -280,11 +458,11 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
         })
 
         // Save to history after the update
-        setTimeout(() => saveToHistory(), 0);
-        return newCells;
+        setTimeout(() => saveToHistory(), 0)
+        return newCells
       }
     })
-  }, [saveToHistory, updateDependencies, calculateFormula, getAffectedCells, setActiveCell]);
+  }, [saveToHistory, updateDependencies, calculateFormula, getAffectedCells, setActiveCell])
 
   const updateCellFormat = useCallback((cellId: string, format: Partial<CellFormat>) => {
     setCells(prev => {
@@ -297,17 +475,17 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
             ...format
           }
         }
-      };
+      }
       
       // Save to history after the update
-      setTimeout(() => saveToHistory(), 0);
-      return newCells;
-    });
-  }, [saveToHistory]);
+      setTimeout(() => saveToHistory(), 0)
+      return newCells
+    })
+  }, [saveToHistory])
 
   const updateMultipleCellsFormat = useCallback((cellIds: string[], format: Partial<CellFormat>) => {
     setCells(prev => {
-      const newCells = { ...prev };
+      const newCells = { ...prev }
       
       cellIds.forEach(cellId => {
         newCells[cellId] = {
@@ -317,13 +495,13 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
             ...format
           }
         }
-      });
+      })
       
       // Save to history after the update
-      setTimeout(() => saveToHistory(), 0);
-      return newCells;
-    });
-  }, [saveToHistory]);
+      setTimeout(() => saveToHistory(), 0)
+      return newCells
+    })
+  }, [saveToHistory])
 
   const isCellFormula = useCallback((cellId: string) => {
     return cells[cellId]?.formula !== undefined && cells[cellId]?.formula.startsWith('=')
@@ -335,96 +513,96 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
 
   // Get cellId from row and column position (e.g., A1, B2, etc.)
   const getCellId = useCallback((position: CellPosition) => {
-    const column = String.fromCharCode(65 + position.col); // A, B, C, ...
-    const row = position.row + 1; // 1-indexed for rows
-    return `${column}${row}`;
-  }, []);
+    const column = String.fromCharCode(65 + position.col) // A, B, C, ...
+    const row = position.row + 1 // 1-indexed for rows
+    return `${column}${row}`
+  }, [])
 
   // Get row and column position from cellId (e.g., A1 -> {row: 0, col: 0})
   const getCellPosition = useCallback((cellId: string) => {
-    const column = cellId.charAt(0);
-    const row = cellId.substring(1);
+    const column = cellId.charAt(0)
+    const row = cellId.substring(1)
     return {
       row: parseInt(row) - 1, // 0-indexed for internal use
       col: column.charCodeAt(0) - 65, // A=0, B=1, ...
-    };
-  }, []);
+    }
+  }, [])
 
   // Get all cells within the current selection
   const getSelectedCells = useCallback(() => {
-    if (!selection) return [];
+    if (!selection) return []
     
-    const startRow = Math.min(selection.start.row, selection.end.row);
-    const endRow = Math.max(selection.start.row, selection.end.row);
-    const startCol = Math.min(selection.start.col, selection.end.col);
-    const endCol = Math.max(selection.start.col, selection.end.col);
+    const startRow = Math.min(selection.start.row, selection.end.row)
+    const endRow = Math.max(selection.start.row, selection.end.row)
+    const startCol = Math.min(selection.start.col, selection.end.col)
+    const endCol = Math.max(selection.start.col, selection.end.col)
     
-    const selected: string[] = [];
+    const selected: string[] = []
     
     for (let row = startRow; row <= endRow; row++) {
       for (let col = startCol; col <= endCol; col++) {
-        selected.push(getCellId({ row, col }));
+        selected.push(getCellId({ row, col }))
       }
     }
     
-    return selected;
-  }, [selection, getCellId]);
+    return selected
+  }, [selection, getCellId])
 
   // Get display value for a cell (calculated value for formulas, or raw value)
   const getCellDisplayValue = useCallback((cellId: string) => {
     if (isCellFormula(cellId)) {
       return cells[cellId]?.calculatedValue !== undefined 
         ? String(cells[cellId].calculatedValue) 
-        : cells[cellId]?.error || '';
+        : cells[cellId]?.error || ''
     }
-    return cells[cellId]?.value || '';
-  }, [cells, isCellFormula]);
+    return cells[cellId]?.value || ''
+  }, [cells, isCellFormula])
 
   // Copy selected cells to clipboard
   const copySelection = useCallback(() => {
-    if (!selection || !activeCell) return;
+    if (!selection || !activeCell) return
     
-    const selectedCells = getSelectedCells();
-    if (selectedCells.length === 0) return;
+    const selectedCells = getSelectedCells()
+    if (selectedCells.length === 0) return
     
-    const clipboardCells: Cells = {};
+    const clipboardCells: Cells = {}
     
     selectedCells.forEach(cellId => {
       if (cells[cellId]) {
-        clipboardCells[cellId] = { ...cells[cellId] };
+        clipboardCells[cellId] = { ...cells[cellId] }
       }
-    });
+    })
     
     setClipboard({
       cells: clipboardCells,
       startCell: selectedCells[0]
-    });
+    })
     
     // Also copy to system clipboard if possible
     if (navigator.clipboard && window.isSecureContext) {
       try {
         // Just a simple text representation for system clipboard
-        const text = selectedCells.map(id => cells[id]?.value || '').join('\t');
-        navigator.clipboard.writeText(text);
+        const text = selectedCells.map(id => cells[id]?.value || '').join('\t')
+        navigator.clipboard.writeText(text)
       } catch (error) {
-        console.error('Failed to copy to system clipboard:', error);
+        console.error('Failed to copy to system clipboard:', error)
       }
     }
     
-    console.log('Copied cells to clipboard:', selectedCells);
-  }, [selection, activeCell, cells, getSelectedCells]);
+    console.log('Copied cells to clipboard:', selectedCells)
+  }, [selection, activeCell, cells, getSelectedCells])
 
   // Cut selected cells (copy + delete)
   const cutSelection = useCallback(() => {
-    if (!selection) return;
+    if (!selection) return
     
     // First copy
-    copySelection();
+    copySelection()
     
     // Then delete
-    const selectedCells = getSelectedCells();
+    const selectedCells = getSelectedCells()
     setCells(prev => {
-      const newCells = { ...prev };
+      const newCells = { ...prev }
       
       selectedCells.forEach(cellId => {
         if (newCells[cellId]) {
@@ -434,85 +612,85 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
             formula: undefined,
             calculatedValue: undefined,
             error: undefined
-          };
+          }
         }
-      });
+      })
       
-      return newCells;
-    });
+      return newCells
+    })
     
-    console.log('Cut cells:', selectedCells);
-  }, [selection, copySelection, getSelectedCells]);
+    console.log('Cut cells:', selectedCells)
+  }, [selection, copySelection, getSelectedCells])
 
   // Paste from clipboard to current active cell
   const pasteSelection = useCallback(() => {
-    if (!activeCell || !clipboard) return;
+    if (!activeCell || !clipboard) return
     
     // Get the position of the target cell (where we're pasting to)
-    const targetPos = getCellPosition(activeCell);
+    const targetPos = getCellPosition(activeCell)
     // Get the position of the original copied cell
-    const sourcePos = getCellPosition(clipboard.startCell);
+    const sourcePos = getCellPosition(clipboard.startCell)
     
     setCells(prev => {
-      const newCells = { ...prev };
+      const newCells = { ...prev }
       
       // Calculate the offset between source and target
-      const rowOffset = targetPos.row - sourcePos.row;
-      const colOffset = targetPos.col - sourcePos.col;
+      const rowOffset = targetPos.row - sourcePos.row
+      const colOffset = targetPos.col - sourcePos.col
       
       // For each cell in clipboard
       Object.entries(clipboard.cells).forEach(([cellId, cellData]) => {
-        const sourcePos = getCellPosition(cellId);
+        const sourcePos = getCellPosition(cellId)
         
         // Calculate new position with offset
-        const newRow = sourcePos.row + rowOffset;
-        const newCol = sourcePos.col + colOffset;
+        const newRow = sourcePos.row + rowOffset
+        const newCol = sourcePos.col + colOffset
         
         // Skip if out of bounds (typical grid is 0-99 rows, 0-25 cols)
         if (newRow < 0 || newRow > 99 || newCol < 0 || newCol > 25) {
-          return;
+          return
         }
         
-        const newCellId = getCellId({ row: newRow, col: newCol });
+        const newCellId = getCellId({ row: newRow, col: newCol })
         
         // Copy data to new position
         newCells[newCellId] = {
           ...cellData,
           // Adjust formula references if needed
           formula: cellData.formula ? adjustFormulaReferences(cellData.formula, rowOffset, colOffset) : undefined
-        };
-      });
+        }
+      })
       
       // Save to history after the update
-      setTimeout(() => saveToHistory(), 0);
-      return newCells;
-    });
+      setTimeout(() => saveToHistory(), 0)
+      return newCells
+    })
     
-    console.log('Pasted from clipboard');
-  }, [activeCell, clipboard, getCellPosition, getCellId, saveToHistory]);
+    console.log('Pasted from clipboard')
+  }, [activeCell, clipboard, getCellPosition, getCellId, saveToHistory])
 
   // Helper function to adjust formula references when pasting
   const adjustFormulaReferences = (formula: string, rowOffset: number, colOffset: number): string => {
     // This is a simple implementation - you might need to make it more sophisticated
     // based on your formula syntax
     return formula.replace(/([A-Z])(\d+)/g, (match, col, row) => {
-      const newRow = parseInt(row) + rowOffset;
-      const newCol = String.fromCharCode(col.charCodeAt(0) + colOffset);
+      const newRow = parseInt(row) + rowOffset
+      const newCol = String.fromCharCode(col.charCodeAt(0) + colOffset)
       if (newRow < 1 || newRow > 100 || newCol < 'A' || newCol > 'Z') {
-        return match; // Keep original reference if new reference would be out of bounds
+        return match // Keep original reference if new reference would be out of bounds
       }
-      return `${newCol}${newRow}`;
-    });
-  };
+      return `${newCol}${newRow}`
+    })
+  }
 
   // Delete content of selected cells
   const deleteSelection = useCallback(() => {
-    if (!selection) return;
+    if (!selection) return
     
-    const selectedCells = getSelectedCells();
+    const selectedCells = getSelectedCells()
     
     setCells(prev => {
-      const newCells = { ...prev };
+      const newCells = { ...prev }
       
       selectedCells.forEach(cellId => {
         if (newCells[cellId]) {
@@ -522,19 +700,19 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
             formula: undefined,
             calculatedValue: undefined,
             error: undefined
-          };
+          }
         } else {
-          newCells[cellId] = { value: '' };
+          newCells[cellId] = { value: '' }
         }
-      });
+      })
       
       // Save to history after the update
-      setTimeout(() => saveToHistory(), 0);
-      return newCells;
-    });
+      setTimeout(() => saveToHistory(), 0)
+      return newCells
+    })
     
-    console.log('Deleted selection:', selectedCells);
-  }, [selection, getSelectedCells, saveToHistory]);
+    console.log('Deleted selection:', selectedCells)
+  }, [selection, getSelectedCells, saveToHistory])
 
   // Update the context value to include all functions
   const value = {
@@ -562,7 +740,7 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
     redo,
     canUndo: () => historyManager.current.canUndo(),
     canRedo: () => historyManager.current.canRedo(),
-  };
+  }
 
   return (
     <SpreadsheetContext.Provider value={value}>

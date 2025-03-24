@@ -1,8 +1,18 @@
 "use client"
 
-import { useRef, useState, useEffect, type MouseEvent, type KeyboardEvent, type ChangeEvent } from "react"
+import { useRef, useState, useEffect, useMemo, useCallback, type MouseEvent, type KeyboardEvent, type ChangeEvent } from "react"
 import { cn } from "@/lib/utils"
 import { useSpreadsheet } from "@/context/spreadsheet-context"
+import Cell from './Cell'
+import { useVirtualizer } from '@tanstack/react-virtual'
+
+// Constants for better maintainability
+const COLUMN_WIDTH = 100
+const ROW_HEIGHT = 32 // Updated to match actual cell height
+const HEADER_HEIGHT = 40
+const HEADER_WIDTH = 40
+const NUM_COLUMNS = 26
+const NUM_ROWS = 100
 
 // Add global styles to prevent text selection during cell selection
 const preventSelectionStyle = {
@@ -40,11 +50,31 @@ export default function SpreadsheetGrid() {
   const [selectionStart, setSelectionStart] = useState<{ row: number; col: number } | null>(null)
   const [mouseDownStartPos, setMouseDownStartPos] = useState<{ x: number; y: number } | null>(null)
 
-  // Generate column headers (A-Z)
-  const columnHeaders = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))
+  // Setup virtualizer for rows
+  const rowVirtualizer = useVirtualizer({
+    count: NUM_ROWS,
+    getScrollElement: () => gridRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 5,
+  })
 
-  // Generate row headers (1-100)
-  const rowHeaders = Array.from({ length: 100 }, (_, i) => i + 1)
+  // Setup virtualizer for columns
+  const columnVirtualizer = useVirtualizer({
+    count: NUM_COLUMNS,
+    getScrollElement: () => gridRef.current,
+    horizontal: true,
+    estimateSize: () => COLUMN_WIDTH,
+    overscan: 2,
+  })
+
+  // Memoize static arrays to prevent recreation on each render
+  const columnHeaders = useMemo(() => 
+    Array.from({ length: NUM_COLUMNS }, (_, i) => String.fromCharCode(65 + i))
+  , [])
+
+  const rowHeaders = useMemo(() => 
+    Array.from({ length: NUM_ROWS }, (_, i) => i + 1)
+  , [])
 
   // Prevent default browser text selection behavior
   useEffect(() => {
@@ -120,8 +150,8 @@ export default function SpreadsheetGrid() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isEditing, undo, redo, copySelection, cutSelection, pasteSelection, deleteSelection, setSelection]);
 
-  // Handle column header click - select entire column
-  const handleColumnHeaderClick = (colIndex: number, e: MouseEvent) => {
+  // Memoize event handlers for better performance
+  const handleColumnHeaderClick = useCallback((colIndex: number, e: MouseEvent) => {
     e.preventDefault()
     
     // If shift is held, extend the current selection
@@ -155,11 +185,10 @@ export default function SpreadsheetGrid() {
     }
     
     // Set the active cell to the top of the column
-    setActiveCell(getCellId({ row: 0, col: colIndex }))
-  }
+    setActiveCell(getCellId({ row: 0, col: colIndex }) || "")
+  }, [selection, setSelection, setActiveCell, getCellId])
   
-  // Handle row header click - select entire row
-  const handleRowHeaderClick = (rowIndex: number, e: MouseEvent) => {
+  const handleRowHeaderClick = useCallback((rowIndex: number, e: MouseEvent) => {
     e.preventDefault()
     
     // If shift is held, extend the current selection
@@ -193,12 +222,12 @@ export default function SpreadsheetGrid() {
     }
     
     // Set the active cell to the start of the row
-    setActiveCell(getCellId({ row: rowIndex, col: 0 }))
-  }
+    setActiveCell(getCellId({ row: rowIndex, col: 0 }) || "")
+  }, [selection, setSelection, setActiveCell, getCellId])
 
-  const handleCellMouseDown = (row: number, col: number, e: MouseEvent) => {
+  const handleCellMouseDown = useCallback((row: number, col: number, e: MouseEvent) => {
     // Get the cell ID for the clicked cell
-    const cellId = getCellId({ row, col })
+    const cellId = getCellId({ row, col }) || ""
 
     // If we're currently editing and click a different cell
     if (isEditing && activeCell !== cellId) {
@@ -231,12 +260,14 @@ export default function SpreadsheetGrid() {
       // If shift is pressed, extend the current selection
       if (e.shiftKey && activeCell) {
         const activePos = getCellPosition(activeCell)
-        setSelection({
-          start: activePos,
-          end: { row, col },
-        })
-        setIsSelecting(true)
-        setSelectionStart({ row, col })
+        if (activePos) {
+          setSelection({
+            start: activePos,
+            end: { row, col },
+          })
+          setIsSelecting(true)
+          setSelectionStart({ row, col })
+        }
       } else {
         // For single click, just set the selection to the clicked cell
         setSelection({
@@ -248,11 +279,9 @@ export default function SpreadsheetGrid() {
         setSelectionStart({ row, col })
       }
     }
+  }, [isEditing, activeCell, editValue, setActiveCell, setEditValue, setIsSelecting, setMouseDownStartPos, setSelection, setSelectionStart, getCellId, getCellPosition, updateCell])
 
-    console.log(`Cell mouse down at row: ${row}, col: ${col}`);
-  }
-
-  const handleCellMouseMove = (row: number, col: number, e: MouseEvent) => {
+  const handleCellMouseMove = useCallback((row: number, col: number, e: MouseEvent) => {
     // Only start selection if mouse has moved a certain distance
     if (selectionStart && mouseDownStartPos && !isSelecting) {
       const dx = Math.abs(e.clientX - mouseDownStartPos.x)
@@ -275,12 +304,12 @@ export default function SpreadsheetGrid() {
       start: selectionStart,
       end: { row, col },
     })
-  }
+  }, [isSelecting, mouseDownStartPos, selectionStart, setIsSelecting, setSelection])
 
-  const handleCellMouseUp = () => {
+  const handleCellMouseUp = useCallback(() => {
     setIsSelecting(false)
     setMouseDownStartPos(null)
-  }
+  }, [])
 
   // Add mouse up handler to window to handle cases where mouse is released outside the grid
   useEffect(() => {
@@ -293,8 +322,8 @@ export default function SpreadsheetGrid() {
     return () => window.removeEventListener("mouseup", handleWindowMouseUp)
   }, [])
 
-  const handleCellDoubleClick = (row: number, col: number) => {
-    const cellId = getCellId({ row, col })
+  const handleCellDoubleClick = useCallback((row: number, col: number) => {
+    const cellId = getCellId({ row, col }) || ""
     setActiveCell(cellId)
     
     // Get the appropriate value to edit - if it's a formula, we want to edit the formula itself
@@ -307,17 +336,16 @@ export default function SpreadsheetGrid() {
 
     // Clear selection when editing
     setSelection(null)
+  }, [setActiveCell, setEditValue, setIsEditing, setSelection, cells, getCellId, isCellFormula])
 
-    console.log(`Editing cell at row: ${row}, col: ${col}`);
-  }
-
-  const handleCellKeyDown = (e: KeyboardEvent) => {
+  const handleCellKeyDown = useCallback((e: KeyboardEvent) => {
     if (!activeCell) return
 
     if (e.key === "Enter") {
       if (isEditing) {
         updateCell(activeCell, editValue)
         setIsEditing(false)
+        e.preventDefault()
       } else {
         // Get the appropriate value to edit - if it's a formula, edit the formula
         const valueToEdit = isCellFormula(activeCell) && cells[activeCell]?.formula 
@@ -327,13 +355,16 @@ export default function SpreadsheetGrid() {
         setEditValue(valueToEdit)
         setIsEditing(true)
         setSelection(null)
+        e.preventDefault()
       }
-      e.preventDefault()
     } else if (e.key === "Escape" && isEditing) {
       setIsEditing(false)
+      setEditValue("")
       e.preventDefault()
     } else if (!isEditing) {
       const activePos = getCellPosition(activeCell)
+      if (!activePos) return
+      
       let newRow = activePos.row
       let newCol = activePos.col
 
@@ -344,7 +375,14 @@ export default function SpreadsheetGrid() {
       else if (e.key === "ArrowRight") newCol = Math.min(25, activePos.col + 1)
       else return
 
-      const newCellId = getCellId({ row: newRow, col: newCol })
+      // If we were editing, save before moving
+      if (isEditing) {
+        updateCell(activeCell, editValue)
+        setIsEditing(false)
+        setEditValue("")
+      }
+
+      const newCellId = getCellId({ row: newRow, col: newCol }) || ""
       setActiveCell(newCellId)
 
       // If shift is pressed, extend the selection
@@ -363,34 +401,31 @@ export default function SpreadsheetGrid() {
 
       e.preventDefault()
     }
+  }, [activeCell, isEditing, editValue, selection, updateCell, setIsEditing, setEditValue, setSelection, setActiveCell, cells, getCellId, getCellPosition, isCellFormula])
 
-    console.log(`Key pressed: ${e.key}`);
-  }
+  const handleCellChange = useCallback((e: ChangeEvent<HTMLInputElement> | string) => {
+    const value = typeof e === 'string' ? e : e.target.value;
+    setEditValue(value);
+  }, [])
 
-  const handleCellChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setEditValue(e.target.value)
-    console.log(`Cell edit value changed: ${e.target.value}`)
-  }
-
-  const handleCellBlur = () => {
+  const handleCellBlur = useCallback(() => {
     if (isEditing && activeCell) {
       updateCell(activeCell, editValue)
       setIsEditing(false)
     }
-    console.log(`Cell edit completed. New value: ${editValue}`)
-  }
+  }, [activeCell, editValue, isEditing, updateCell, setIsEditing])
 
   // Handle typing directly without double click (auto-start edit mode)
-  const handleKeyPress = (e: KeyboardEvent) => {
+  const handleKeyPress = useCallback((e: KeyboardEvent) => {
     if (!isEditing && activeCell && e.key.length === 1) {
       setEditValue(e.key)
       setIsEditing(true)
       e.preventDefault()
     }
-  }
+  }, [activeCell, isEditing, setEditValue, setIsEditing])
 
   // Check if a cell is in the current selection
-  const isCellSelected = (row: number, col: number): boolean => {
+  const isCellSelected = useCallback((row: number, col: number): boolean => {
     if (!selection) return false
 
     const startRow = Math.min(selection.start.row, selection.end.row)
@@ -399,10 +434,10 @@ export default function SpreadsheetGrid() {
     const endCol = Math.max(selection.start.col, selection.end.col)
 
     return row >= startRow && row <= endRow && col >= startCol && col <= endCol
-  }
+  }, [selection])
 
   // Check if an entire column is selected (for header highlighting)
-  const isEntireColumnSelected = (colIndex: number): boolean => {
+  const isEntireColumnSelected = useCallback((colIndex: number): boolean => {
     if (!selection) return false
     
     const startCol = Math.min(selection.start.col, selection.end.col)
@@ -411,10 +446,10 @@ export default function SpreadsheetGrid() {
     const endRow = Math.max(selection.start.row, selection.end.row)
     
     return colIndex >= startCol && colIndex <= endCol && startRow === 0 && endRow === 99
-  }
+  }, [selection])
   
   // Check if an entire row is selected (for header highlighting)
-  const isEntireRowSelected = (rowIndex: number): boolean => {
+  const isEntireRowSelected = useCallback((rowIndex: number): boolean => {
     if (!selection) return false
     
     const startRow = Math.min(selection.start.row, selection.end.row)
@@ -423,151 +458,131 @@ export default function SpreadsheetGrid() {
     const endCol = Math.max(selection.start.col, selection.end.col)
     
     return rowIndex >= startRow && rowIndex <= endRow && startCol === 0 && endCol === 25
-  }
+  }, [selection])
 
-  // Log component render
+  // Handle clicking outside the grid
   useEffect(() => {
-    console.log("SpreadsheetGrid rendered");
-    return () => {
-      console.log("SpreadsheetGrid unmounted");
-    };
-  }, []);
-
-  // Hook into selection changes to log them
-  useEffect(() => {
-    if (selection) {
-      console.log("Selection changed:", selection);
-      console.log("Selected cells:", getSelectedCells());
+    const handleClickOutside = (e: globalThis.MouseEvent) => {
+      if (gridRef.current && !gridRef.current.contains(e.target as Node) && isEditing) {
+        // Save any pending edits when clicking outside
+        if (activeCell) {
+          updateCell(activeCell, editValue)
+        }
+        setIsEditing(false)
+        setEditValue("")
+      }
     }
-  }, [selection, getSelectedCells]);
+
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [isEditing, activeCell, editValue, updateCell])
+
+  // Removed console.log statements for better performance
 
   return (
     <div 
-      className="relative overflow-auto h-full" 
+      className="relative overflow-auto h-full will-change-scroll" 
       tabIndex={0} 
       onKeyDown={handleCellKeyDown} 
       onKeyPress={handleKeyPress}
       ref={gridRef}
       style={isSelecting ? preventSelectionStyle : undefined}
     >
-      <div className="inline-block min-w-full">
-        <div className="grid grid-cols-[40px_repeat(26,100px)] sticky top-0 z-10">
+      <div 
+        className="relative"
+        style={{
+          height: `${rowVirtualizer.getTotalSize()}px`,
+          width: `${columnVirtualizer.getTotalSize() + HEADER_WIDTH}px`,
+        }}
+      >
+        {/* Fixed header row */}
+        <div className="sticky top-0 z-10 flex" style={{ height: HEADER_HEIGHT }}>
           {/* Empty corner cell */}
-          <div className="h-10 bg-gray-100 border-b border-r border-gray-200 flex items-center justify-center" style={preventSelectionStyle}></div>
+          <div className="bg-gray-100 border-b border-r border-gray-200 flex items-center justify-center" 
+               style={{ width: HEADER_WIDTH, height: HEADER_HEIGHT }}>
+          </div>
 
-          {/* Column headers */}
-          {columnHeaders.map((header, colIndex) => (
-            <div
-              key={header}
-              className={cn(
-                "h-10 bg-gray-100 border-b border-r border-gray-200 flex items-center justify-center font-medium text-gray-600 cursor-pointer hover:bg-gray-200 transition-colors",
-                isEntireColumnSelected(colIndex) && "bg-blue-100"
-              )}
-              style={preventSelectionStyle}
-              onClick={(e) => handleColumnHeaderClick(colIndex, e)}
-            >
-              {header}
-            </div>
-          ))}
+          {/* Virtualized column headers */}
+          {columnVirtualizer.getVirtualItems().map((virtualColumn) => {
+            const header = String.fromCharCode(65 + virtualColumn.index)
+            return (
+              <div
+                key={virtualColumn.index}
+                className={cn(
+                  "bg-gray-100 border-b border-r border-gray-200 flex items-center justify-center font-medium text-gray-600 cursor-pointer hover:bg-gray-200 transition-colors",
+                  isEntireColumnSelected(virtualColumn.index) && "bg-blue-100"
+                )}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: `${virtualColumn.start + HEADER_WIDTH}px`,
+                  width: `${virtualColumn.size}px`,
+                  height: HEADER_HEIGHT,
+                }}
+                onClick={(e) => handleColumnHeaderClick(virtualColumn.index, e)}
+              >
+                {header}
+              </div>
+            )
+          })}
         </div>
 
-        {/* Grid rows */}
-        {rowHeaders.map((rowNum, rowIndex) => (
-          <div key={rowNum} className="grid grid-cols-[40px_repeat(26,100px)]">
+        {/* Virtualized rows */}
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => (
+          <div
+            key={virtualRow.index}
+            className="absolute flex"
+            style={{
+              top: 0,
+              transform: `translateY(${virtualRow.start + HEADER_HEIGHT}px)`,
+              height: ROW_HEIGHT,
+            }}
+          >
             {/* Row header */}
             <div 
               className={cn(
-                "h-8 bg-gray-100 border-b border-r border-gray-200 flex items-center justify-center font-medium text-gray-600 sticky left-0 z-10 cursor-pointer hover:bg-gray-200 transition-colors",
-                isEntireRowSelected(rowIndex) && "bg-blue-100"
+                "bg-gray-100 border-b border-r border-gray-200 flex items-center justify-center font-medium text-gray-600 sticky left-0 cursor-pointer hover:bg-gray-200 transition-colors",
+                isEntireRowSelected(virtualRow.index) && "bg-blue-100"
               )}
-              style={preventSelectionStyle}
-              onClick={(e) => handleRowHeaderClick(rowIndex, e)}
+              style={{ width: HEADER_WIDTH, height: ROW_HEIGHT }}
+              onClick={(e) => handleRowHeaderClick(virtualRow.index, e)}
             >
-              {rowNum}
+              {virtualRow.index + 1}
             </div>
 
-            {/* Row cells */}
-            {columnHeaders.map((colLetter, colIndex) => {
-              const cellId = getCellId({ row: rowIndex, col: colIndex })
+            {/* Virtualized cells in the row */}
+            {columnVirtualizer.getVirtualItems().map((virtualColumn) => {
+              const cellId = getCellId({ row: virtualRow.index, col: virtualColumn.index })
               const isActive = activeCell === cellId
-              const isSelected = isCellSelected(rowIndex, colIndex)
+              const isSelected = isCellSelected(virtualRow.index, virtualColumn.index)
 
               return (
                 <div
-                  key={`${rowIndex}-${colIndex}`}
+                  key={`${virtualRow.index}-${virtualColumn.index}`}
                   className={cn(
-                    "h-8 border-b border-r border-gray-200 relative",
+                    "border-b border-r border-gray-200 relative",
                     isActive && "outline outline-2 outline-blue-500 z-20",
                     isSelected && !isActive && "bg-blue-50/70",
                     isActive && isSelected && "bg-blue-100",
                   )}
-                  onMouseDown={(e) => handleCellMouseDown(rowIndex, colIndex, e)}
-                  onMouseMove={(e) => handleCellMouseMove(rowIndex, colIndex, e)}
+                  style={{
+                    position: 'absolute',
+                    left: `${virtualColumn.start + HEADER_WIDTH}px`,
+                    width: virtualColumn.size,
+                    height: ROW_HEIGHT,
+                  }}
+                  onMouseDown={(e) => handleCellMouseDown(virtualRow.index, virtualColumn.index, e)}
+                  onMouseMove={(e) => handleCellMouseMove(virtualRow.index, virtualColumn.index, e)}
                   onMouseUp={handleCellMouseUp}
-                  onDoubleClick={() => handleCellDoubleClick(rowIndex, colIndex)}
-                  style={!isEditing ? preventSelectionStyle : undefined}
+                  onDoubleClick={() => handleCellDoubleClick(virtualRow.index, virtualColumn.index)}
                 >
-                  {isActive && isEditing ? (
-                    <input
-                      className="absolute inset-0 w-full h-full px-2 border-none outline-none bg-white"
-                      value={editValue}
-                      onChange={handleCellChange}
-                      onBlur={handleCellBlur}
-                      autoFocus
-                    />
-                  ) : (
-                    <div
-                      className={cn(
-                        "px-2 py-1 overflow-hidden text-sm whitespace-nowrap h-full flex items-center",
-                        cells[cellId]?.error && "text-red-500"
-                      )}
-                      style={{
-                        fontFamily:
-                          cells[cellId]?.format?.fontFamily === "serif"
-                            ? "serif"
-                            : cells[cellId]?.format?.fontFamily === "mono"
-                              ? "monospace"
-                              : cells[cellId]?.format?.fontFamily === "inter"
-                                ? "Inter, sans-serif"
-                                : cells[cellId]?.format?.fontFamily === "roboto"
-                                  ? "Roboto, sans-serif"
-                                  : cells[cellId]?.format?.fontFamily === "poppins"
-                                    ? "Poppins, sans-serif"
-                                    : "sans-serif",
-                        fontSize:
-                          cells[cellId]?.format?.fontSize === "xs"
-                            ? "10px"
-                            : cells[cellId]?.format?.fontSize === "sm"
-                              ? "12px"
-                              : cells[cellId]?.format?.fontSize === "lg"
-                                ? "16px"
-                                : cells[cellId]?.format?.fontSize === "xl"
-                                  ? "18px"
-                                  : cells[cellId]?.format?.fontSize === "2xl"
-                                    ? "20px"
-                                    : cells[cellId]?.format?.fontSize === "3xl"
-                                      ? "24px"
-                                      : "14px",
-                        fontWeight: cells[cellId]?.format?.bold ? "bold" : "normal",
-                        fontStyle: cells[cellId]?.format?.italic ? "italic" : "normal",
-                        textDecoration: cells[cellId]?.format?.underline ? "underline" : "none",
-                        textAlign: cells[cellId]?.format?.align || "left",
-                        color: cells[cellId]?.error ? "red" : (cells[cellId]?.format?.textColor || "inherit"),
-                        backgroundColor: cells[cellId]?.format?.fillColor || "transparent",
-                        width: "100%",
-                        justifyContent:
-                          cells[cellId]?.format?.align === "center"
-                            ? "center"
-                            : cells[cellId]?.format?.align === "right"
-                              ? "flex-end"
-                              : "flex-start",
-                        ...(preventSelectionStyle as any),
-                      }}
-                    >
-                      {/* Display calculated value for formulas, otherwise show raw value */}
-                      {isCellFormula(cellId) ? getCellDisplayValue(cellId) : cells[cellId]?.value || ""}
-                    </div>
-                  )}
+                  <Cell
+                    data={cells[cellId]}
+                    isEditing={isActive && isEditing}
+                    editValue={editValue}
+                    onChange={handleCellChange}
+                    onBlur={handleCellBlur}
+                  />
                 </div>
               )
             })}
