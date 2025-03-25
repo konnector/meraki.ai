@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import React, { useState, useEffect, useCallback, useRef } from "react"
+import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
@@ -8,43 +9,141 @@ import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PlusIcon, Search, FileSpreadsheet, Star, Clock } from "lucide-react"
 import DashboardLayout from "@/components/Dashboard/dashboard-layout"
+import { useSpreadsheet } from "@/hooks/useSpreadsheet"
+import { formatDistanceToNow } from "date-fns"
+import { useSession } from "@clerk/nextjs"
 
 type Spreadsheet = {
   id: string
-  name: string
-  lastModified: string
-  starred: boolean
+  title: string
+  created_at: string
+  updated_at: string
+  starred?: boolean // We'll manage this on the client side for now
 }
 
 export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("")
+  const [spreadsheets, setSpreadsheets] = useState<Spreadsheet[]>([])
+  const [starred, setStarred] = useState<Record<string, boolean>>({}) // Track starred items separately
+  const [isLoading, setIsLoading] = useState(true)
+  const { getSpreadsheets, createSpreadsheet, loading, error } = useSpreadsheet()
+  const router = useRouter()
+  const dataFetchedRef = useRef(false)
+  const { isLoaded, isSignedIn, session } = useSession()
 
-  // Mock data for spreadsheets
-  const [spreadsheets, setSpreadsheets] = useState<Spreadsheet[]>([
-    { id: "1", name: "Budget 2025", lastModified: "2 hours ago", starred: true },
-    { id: "2", name: "Sales Report Q1", lastModified: "Yesterday", starred: true },
-    { id: "3", name: "Project Timeline", lastModified: "3 days ago", starred: false },
-    { id: "4", name: "Expense Tracker", lastModified: "1 week ago", starred: false },
-    { id: "5", name: "Marketing Campaign", lastModified: "2 weeks ago", starred: false },
-    { id: "6", name: "Team Performance", lastModified: "1 month ago", starred: false },
-  ])
+  // Load spreadsheets from Supabase once Clerk session is loaded
+  useEffect(() => {
+    // Wait for Clerk to initialize and confirm user is signed in
+    if (!isLoaded) return;
+    
+    // If not signed in, don't try to load spreadsheets
+    if (!isSignedIn) {
+      setIsLoading(false);
+      return;
+    }
+    
+    // Prevent multiple data fetch attempts
+    if (dataFetchedRef.current) return;
+    
+    async function loadSpreadsheets() {
+      try {
+        setIsLoading(true)
+        const data = await getSpreadsheets()
+        setSpreadsheets(Array.isArray(data) ? data : [])
+        dataFetchedRef.current = true
+      } catch (err) {
+        console.error("Failed to load spreadsheets:", err)
+      } finally {
+        setIsLoading(false)
+      }
+    }
 
-  const toggleStar = (id: string) => {
-    setSpreadsheets((prev) => prev.map((sheet) => (sheet.id === id ? { ...sheet, starred: !sheet.starred } : sheet)))
-  }
+    loadSpreadsheets()
+  }, [isLoaded, isSignedIn, getSpreadsheets]) // Include Clerk loading state dependencies
+
+  const toggleStar = useCallback((id: string) => {
+    setStarred(prev => ({ ...prev, [id]: !prev[id] }))
+  }, [])
+
+  // Create a new spreadsheet and redirect to it
+  const handleCreateSpreadsheet = useCallback(async () => {
+    try {
+      const newSpreadsheet = await createSpreadsheet("Untitled Spreadsheet")
+      if (newSpreadsheet?.id) {
+        router.push(`/spreadsheet/${newSpreadsheet.id}`)
+      }
+    } catch (err) {
+      console.error("Failed to create new spreadsheet:", err)
+    }
+  }, [createSpreadsheet, router])
 
   const filteredSpreadsheets = spreadsheets.filter((sheet) =>
-    sheet.name.toLowerCase().includes(searchQuery.toLowerCase()),
+    sheet.title.toLowerCase().includes(searchQuery.toLowerCase()),
   )
 
-  const starredSpreadsheets = filteredSpreadsheets.filter((sheet) => sheet.starred)
+  const starredSpreadsheets = filteredSpreadsheets.filter((sheet) => starred[sheet.id])
   const recentSpreadsheets = [...filteredSpreadsheets].sort((a, b) => {
-    // Simple sort by lastModified (in a real app, use actual dates)
-    const timeUnits = ["hours", "Yesterday", "days", "week", "weeks", "month"]
-    const aIndex = timeUnits.findIndex((unit) => a.lastModified.includes(unit))
-    const bIndex = timeUnits.findIndex((unit) => b.lastModified.includes(unit))
-    return aIndex - bIndex
+    // Sort by updated_at date, newest first
+    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
   })
+
+  const formatDate = useCallback((dateString: string) => {
+    try {
+      return formatDistanceToNow(new Date(dateString), { addSuffix: true })
+    } catch (e) {
+      return "Unknown date"
+    }
+  }, [])
+
+  // Show loading while Clerk is initializing
+  if (!isLoaded || isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="p-6 flex justify-center items-center min-h-[50vh]">
+          <div className="text-center">
+            <p className="text-gray-500">Loading spreadsheets...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    )
+  }
+
+  // Handle authentication state
+  if (!isSignedIn) {
+    return (
+      <DashboardLayout>
+        <div className="p-6 flex justify-center items-center min-h-[50vh]">
+          <div className="text-center">
+            <p className="text-red-500">Please sign in to view your spreadsheets</p>
+            <Button 
+              className="mt-4" 
+              onClick={() => router.push('/sign-in')}
+            >
+              Sign In
+            </Button>
+          </div>
+        </div>
+      </DashboardLayout>
+    )
+  }
+
+  if (error) {
+    return (
+      <DashboardLayout>
+        <div className="p-6 flex justify-center items-center min-h-[50vh]">
+          <div className="text-center">
+            <p className="text-red-500">Error: {error}</p>
+            <Button 
+              className="mt-4" 
+              onClick={() => window.location.reload()}
+            >
+              Retry
+            </Button>
+          </div>
+        </div>
+      </DashboardLayout>
+    )
+  }
 
   return (
     <DashboardLayout>
@@ -62,12 +161,14 @@ export default function DashboardPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <Link href="/spreadsheet/new">
-              <Button className="bg-gray-900 text-white hover:bg-gray-800">
-                <PlusIcon className="h-4 w-4 mr-2" />
-                New
-              </Button>
-            </Link>
+            <Button 
+              className="bg-gray-900 text-white hover:bg-gray-800"
+              onClick={handleCreateSpreadsheet}
+              disabled={loading}
+            >
+              <PlusIcon className="h-4 w-4 mr-2" />
+              New
+            </Button>
           </div>
         </div>
 
@@ -86,7 +187,13 @@ export default function DashboardPage() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredSpreadsheets.map((sheet) => (
-                  <SpreadsheetCard key={sheet.id} spreadsheet={sheet} onToggleStar={toggleStar} />
+                  <SpreadsheetCard 
+                    key={sheet.id} 
+                    spreadsheet={sheet} 
+                    isStarred={!!starred[sheet.id]}
+                    onToggleStar={toggleStar} 
+                    formattedDate={formatDate(sheet.updated_at)}
+                  />
                 ))}
               </div>
             )}
@@ -100,7 +207,13 @@ export default function DashboardPage() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {starredSpreadsheets.map((sheet) => (
-                  <SpreadsheetCard key={sheet.id} spreadsheet={sheet} onToggleStar={toggleStar} />
+                  <SpreadsheetCard 
+                    key={sheet.id} 
+                    spreadsheet={sheet} 
+                    isStarred={true}
+                    onToggleStar={toggleStar} 
+                    formattedDate={formatDate(sheet.updated_at)}
+                  />
                 ))}
               </div>
             )}
@@ -114,7 +227,13 @@ export default function DashboardPage() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {recentSpreadsheets.map((sheet) => (
-                  <SpreadsheetCard key={sheet.id} spreadsheet={sheet} onToggleStar={toggleStar} />
+                  <SpreadsheetCard 
+                    key={sheet.id} 
+                    spreadsheet={sheet} 
+                    isStarred={!!starred[sheet.id]}
+                    onToggleStar={toggleStar}
+                    formattedDate={formatDate(sheet.updated_at)} 
+                  />
                 ))}
               </div>
             )}
@@ -125,12 +244,16 @@ export default function DashboardPage() {
   )
 }
 
-function SpreadsheetCard({
+const SpreadsheetCard = React.memo(function SpreadsheetCard({
   spreadsheet,
+  isStarred,
   onToggleStar,
+  formattedDate,
 }: {
   spreadsheet: Spreadsheet
+  isStarred: boolean
   onToggleStar: (id: string) => void
+  formattedDate: string
 }) {
   return (
     <Card className="overflow-hidden">
@@ -142,18 +265,18 @@ function SpreadsheetCard({
       <CardContent className="p-4">
         <div className="flex items-start justify-between">
           <Link href={`/spreadsheet/${spreadsheet.id}`} className="flex-1">
-            <h3 className="font-medium text-gray-900 hover:underline truncate">{spreadsheet.name}</h3>
+            <h3 className="font-medium text-gray-900 hover:underline truncate">{spreadsheet.title}</h3>
           </Link>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onToggleStar(spreadsheet.id)}>
-            <Star className={`h-4 w-4 ${spreadsheet.starred ? "fill-yellow-400 text-yellow-400" : "text-gray-400"}`} />
+            <Star className={`h-4 w-4 ${isStarred ? "fill-yellow-400 text-yellow-400" : "text-gray-400"}`} />
           </Button>
         </div>
       </CardContent>
       <CardFooter className="p-4 pt-0 text-sm text-gray-500 flex items-center">
         <Clock className="h-3.5 w-3.5 mr-1.5" />
-        {spreadsheet.lastModified}
+        {formattedDate}
       </CardFooter>
     </Card>
   )
-}
+})
 
