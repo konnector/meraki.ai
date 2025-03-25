@@ -54,6 +54,18 @@ export function useSpreadsheetApi() {
         })
         .eq('id', id);
     },
+
+    // Update spreadsheet title
+    async updateTitle(id: string, title: string) {
+      const client = await getClient();
+      return client
+        .from('spreadsheets')
+        .update({ 
+          title,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id);
+    },
     
     // Delete a spreadsheet
     async deleteSpreadsheet(id: string) {

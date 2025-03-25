@@ -10,14 +10,25 @@ import Toolbar from "@/components/SpreadSheet/toolbar"
 import { FormulaBar } from "@/components/SpreadSheet/formula-bar"
 import DashboardLayout from "@/components/Dashboard/dashboard-layout"
 import KeyboardShortcutsHelp from "@/components/SpreadSheet/keyboard-shortcuts-help"
-import { ArrowLeft, Star } from "lucide-react"
+import { ArrowLeft, Star, Loader2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { SpreadsheetProvider, useSpreadsheet } from "@/context/spreadsheet-context"
 import { Button } from "@/components/ui/button"
+import { useSpreadsheetApi } from "@/lib/supabase/secure-api"
+
+function LoadingSpinner() {
+  return (
+    <div className="h-screen w-full flex items-center justify-center">
+      <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+    </div>
+  )
+}
 
 function SpreadsheetContent() {
-  const { title, setTitle, isStarred, toggleStar } = useSpreadsheet()
+  const { title, setTitle, isStarred, toggleStar, isLoading } = useSpreadsheet()
   const [isEditingTitle, setIsEditingTitle] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const { isLoaded } = useSpreadsheetApi()
 
   const handleTitleClick = () => {
     setIsEditingTitle(true)
@@ -27,16 +38,32 @@ function SpreadsheetContent() {
     setTitle(e.target.value)
   }
 
-  const handleTitleBlur = () => {
+  const handleTitleBlur = async () => {
     setIsEditingTitle(false)
+    setIsSaving(true)
+    try {
+      await setTitle(title)
+    } finally {
+      setIsSaving(false)
+    }
   }
 
-  const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleTitleKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       setIsEditingTitle(false)
+      setIsSaving(true)
+      try {
+        await setTitle(title)
+      } finally {
+        setIsSaving(false)
+      }
     } else if (e.key === "Escape") {
       setIsEditingTitle(false)
     }
+  }
+
+  if (!isLoaded || isLoading) {
+    return <LoadingSpinner />
   }
 
   return (
@@ -80,7 +107,9 @@ function SpreadsheetContent() {
                 <Star className="h-5 w-5" />
               </Button>
 
-              <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">Saved</span>
+              <span className={`text-xs ${isSaving ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-600'} px-2 py-0.5 rounded-full`}>
+                {isSaving ? 'Saving...' : 'Saved'}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <KeyboardShortcutsHelp />
@@ -104,6 +133,11 @@ function SpreadsheetContent() {
 export default function SpreadsheetPage() {
   const params = useParams()
   const spreadsheetId = typeof params?.id === 'string' ? params.id : null
+  const { isLoaded } = useSpreadsheetApi()
+
+  if (!isLoaded) {
+    return <LoadingSpinner />
+  }
 
   if (!spreadsheetId) {
     return <div>Invalid spreadsheet ID</div>

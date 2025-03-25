@@ -46,6 +46,7 @@ type SpreadsheetContextType = {
   selection: Selection
   title: string
   isStarred: boolean
+  isLoading: boolean
   setTitle: (title: string) => void
   toggleStar: () => void
   updateCell: (cellId: string, value: string) => void
@@ -87,6 +88,7 @@ export function SpreadsheetProvider({ children, spreadsheetId }: { children: Rea
   const [selection, setSelection] = useState<Selection>(null);
   const [clipboard, setClipboard] = useState<{cells: Cells, startCell: string} | null>(null);
   const [isStarred, setIsStarred] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const historyManager = useRef(new HistoryManager());
   const isHistoryAction = useRef(false);
   const spreadsheetApi = useSpreadsheetApi();
@@ -99,6 +101,7 @@ export function SpreadsheetProvider({ children, spreadsheetId }: { children: Rea
   useEffect(() => {
     if (spreadsheetId) {
       const loadSpreadsheet = async () => {
+        setIsLoading(true);
         try {
           const result = await spreadsheetApi.getSpreadsheet(spreadsheetId);
           if (result.data) {
@@ -109,9 +112,13 @@ export function SpreadsheetProvider({ children, spreadsheetId }: { children: Rea
           }
         } catch (err) {
           console.error('Failed to load spreadsheet:', err);
+        } finally {
+          setIsLoading(false);
         }
       };
       loadSpreadsheet();
+    } else {
+      setIsLoading(false);
     }
   }, [spreadsheetId]);
 
@@ -151,19 +158,29 @@ export function SpreadsheetProvider({ children, spreadsheetId }: { children: Rea
   const handleSetTitle = useCallback(async (newTitle: string) => {
     setTitle(newTitle);
     if (spreadsheetId) {
-      // Update the spreadsheet data in Supabase
-      const result = await spreadsheetApi.getSpreadsheet(spreadsheetId);
-      if (result.data) {
-        await spreadsheetApi.updateSpreadsheet(spreadsheetId, {
-          ...result.data.data,
-          meta: {
-            ...result.data.data.meta,
-            lastModified: new Date().toISOString(),
-          }
-        });
+      try {
+        // Get current spreadsheet data
+        const result = await spreadsheetApi.getSpreadsheet(spreadsheetId);
+        if (result.data) {
+          // Update both the title and spreadsheet data
+          await spreadsheetApi.updateSpreadsheet(spreadsheetId, {
+            cells,
+            isStarred,
+            meta: {
+              rowCount: 100,
+              columnCount: 26,
+              lastModified: new Date().toISOString(),
+            }
+          });
+
+          // Make a separate call to update the title in the spreadsheets table
+          await spreadsheetApi.updateTitle(spreadsheetId, newTitle);
+        }
+      } catch (err) {
+        console.error('Failed to update spreadsheet title:', err);
       }
     }
-  }, [spreadsheetId, spreadsheetApi]);
+  }, [spreadsheetId, spreadsheetApi, cells, isStarred]);
 
   // Add star toggle function
   const toggleStar = useCallback(() => {
@@ -619,6 +636,7 @@ export function SpreadsheetProvider({ children, spreadsheetId }: { children: Rea
     selection,
     title,
     isStarred,
+    isLoading,
     setTitle: handleSetTitle,
     toggleStar,
     updateCell,
