@@ -1,13 +1,24 @@
-export interface Spreadsheet {
+export type Spreadsheet = {
   id: string;
   user_id: string;
   title: string;
-  data: SpreadsheetData;
+  data?: {
+    isStarred?: boolean;
+    cells?: {
+      [key: string]: CellData;
+    };
+    meta?: {
+      rowCount: number;
+      columnCount: number;
+      lastModified?: string;
+    };
+  };
   created_at: string;
   updated_at: string;
 }
 
-export interface SpreadsheetData {
+export type SpreadsheetData = {
+  isStarred?: boolean;
   cells?: {
     [key: string]: CellData;
   };
@@ -16,7 +27,6 @@ export interface SpreadsheetData {
     columnCount: number;
     lastModified?: string;
   };
-  isStarred?: boolean;
 }
 
 export interface CellData {

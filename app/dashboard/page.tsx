@@ -1,282 +1,346 @@
 "use client"
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
-import { useRouter } from "next/navigation"
-import Link from "next/link"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { PlusIcon, Search, FileSpreadsheet, Star, Clock } from "lucide-react"
+import { Plus, Star, Clock, FileSpreadsheet, Loader2, Search, MoreHorizontal, X } from "lucide-react"
+import Link from "next/link"
 import DashboardLayout from "@/components/Dashboard/dashboard-layout"
+import { SidebarProvider } from "@/components/ui/sidebar"
 import { useSpreadsheetApi } from "@/lib/supabase/secure-api"
-import { formatDistanceToNow } from "date-fns"
-import { useSession } from "@clerk/nextjs"
+import { SpreadsheetProvider, useSpreadsheet } from "@/context/spreadsheet-context"
 import type { Spreadsheet } from "@/lib/supabase/types"
+import { formatDistanceToNow } from "date-fns"
+import { Card, CardContent } from "@/components/ui/card"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { motion } from "framer-motion"
 
-export default function DashboardPage() {
-  const [searchQuery, setSearchQuery] = useState("")
-  const [spreadsheets, setSpreadsheets] = useState<Spreadsheet[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+function SpreadsheetCard({ sheet }: { sheet: Spreadsheet }) {
+  return (
+    <SpreadsheetProvider spreadsheetId={sheet.id}>
+      <SpreadsheetCardContent sheet={sheet} />
+    </SpreadsheetProvider>
+  )
+}
+
+function SpreadsheetCardContent({ sheet }: { sheet: Spreadsheet }) {
+  const { toggleStar, isStarred } = useSpreadsheet()
   const spreadsheetApi = useSpreadsheetApi()
-  const router = useRouter()
-  const dataFetchedRef = useRef(false)
-  const { isLoaded, isSignedIn, session } = useSession()
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [newTitle, setNewTitle] = useState(sheet.title)
 
-  // Load spreadsheets from Supabase once Clerk session is loaded
-  useEffect(() => {
-    // Wait for Clerk to initialize and confirm user is signed in
-    if (!isLoaded) return;
-    
-    // If not signed in, don't try to load spreadsheets
-    if (!isSignedIn) {
-      setIsLoading(false);
-      return;
-    }
-    
-    // Prevent multiple data fetch attempts
-    if (dataFetchedRef.current) return;
-    
-    async function loadSpreadsheets() {
-      try {
-        setIsLoading(true)
-        const result = await spreadsheetApi.getSpreadsheets()
-        if (result.error) {
-          throw new Error(result.error.message)
-        }
-        setSpreadsheets(result.data || [])
-        dataFetchedRef.current = true
-      } catch (err) {
-        console.error("Failed to load spreadsheets:", err)
-        setError(err instanceof Error ? err.message : "Failed to load spreadsheets")
-      } finally {
-        setIsLoading(false)
-      }
-    }
-
-    loadSpreadsheets()
-  }, [isLoaded, isSignedIn, spreadsheetApi])
-
-  const toggleStar = useCallback(async (id: string) => {
-    const spreadsheet = spreadsheets.find(s => s.id === id);
-    if (!spreadsheet) return;
-
-    const isCurrentlyStarred = spreadsheet.data?.isStarred || false;
-    
-    try {
-      const result = await spreadsheetApi.updateSpreadsheet(id, {
-        ...spreadsheet.data,
-        isStarred: !isCurrentlyStarred
-      });
-
-      if (result.error) {
-        throw new Error(result.error.message)
-      }
-
-      setSpreadsheets(prev => prev.map(s => 
-        s.id === id 
-          ? { 
-              ...s, 
-              data: { 
-                ...s.data, 
-                isStarred: !isCurrentlyStarred 
-              } 
-            }
-          : s
-      ));
-    } catch (err) {
-      console.error("Failed to update star status:", err);
-      setError(err instanceof Error ? err.message : "Failed to update star status")
-    }
-  }, [spreadsheets, spreadsheetApi]);
-
-  // Create a new spreadsheet and redirect to it
-  const handleCreateSpreadsheet = useCallback(async () => {
-    try {
-      setIsLoading(true)
-      const result = await spreadsheetApi.createSpreadsheet("Untitled Spreadsheet")
-      if (result.error) {
-        throw new Error(result.error.message)
-      }
-      if (result.data?.id) {
-        router.push(`/spreadsheet/${result.data.id}`)
-      }
-    } catch (err) {
-      console.error("Failed to create new spreadsheet:", err)
-      setError(err instanceof Error ? err.message : "Failed to create spreadsheet")
-    } finally {
-      setIsLoading(false)
-    }
-  }, [spreadsheetApi, router])
-
-  // Filter spreadsheets based on search query
-  const filteredSpreadsheets = useMemo(() => {
-    return spreadsheets.filter(spreadsheet =>
-      spreadsheet.title.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-  }, [spreadsheets, searchQuery])
-
-  // Separate starred and unstarred spreadsheets
-  const { starredSpreadsheets, unstarredSpreadsheets } = useMemo(() => {
-    return {
-      starredSpreadsheets: filteredSpreadsheets.filter(s => s.data?.isStarred),
-      unstarredSpreadsheets: filteredSpreadsheets.filter(s => !s.data?.isStarred)
-    }
-  }, [filteredSpreadsheets])
-
-  const formatDate = useCallback((dateString: string) => {
-    try {
-      return formatDistanceToNow(new Date(dateString), { addSuffix: true })
-    } catch (e) {
-      return "Unknown date"
-    }
-  }, [])
-
-  // Show loading while Clerk is initializing
-  if (!isLoaded || isLoading) {
-    return (
-      <DashboardLayout>
-        <div className="p-6 flex justify-center items-center min-h-[50vh]">
-          <div className="text-center">
-            <p className="text-gray-500">Loading spreadsheets...</p>
-          </div>
-        </div>
-      </DashboardLayout>
-    )
+  const handleToggleStar = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    toggleStar()
   }
 
-  // Handle authentication state
-  if (!isSignedIn) {
-    return (
-      <DashboardLayout>
-        <div className="p-6 flex justify-center items-center min-h-[50vh]">
-          <div className="text-center">
-            <p className="text-red-500">Please sign in to view your spreadsheets</p>
-            <Button 
-              className="mt-4" 
-              onClick={() => router.push('/sign-in')}
-            >
-              Sign In
-            </Button>
+  const handleRename = async () => {
+    try {
+      const response = await spreadsheetApi.updateTitle(sheet.id, newTitle)
+      if (response.error) {
+        throw response.error
+      }
+      setIsRenaming(false)
+      // Refresh the page to show updated title
+      window.location.reload()
+    } catch (e) {
+      console.error("Failed to rename spreadsheet:", e)
+    }
+  }
+
+  const handleDuplicate = async () => {
+    try {
+      // Create a new spreadsheet with the same data
+      const response = await spreadsheetApi.createSpreadsheet(`${sheet.title} (Copy)`)
+      if (response.error) {
+        throw response.error
+      }
+      if (response.data?.[0]?.id) {
+        // Update the new spreadsheet with the data from the current one
+        await spreadsheetApi.updateSpreadsheet(response.data[0].id, sheet.data || {})
+        // Refresh the page to show the new spreadsheet
+        window.location.reload()
+      }
+    } catch (e) {
+      console.error("Failed to duplicate spreadsheet:", e)
+    }
+  }
+
+  const handleShare = () => {
+    // Copy the spreadsheet URL to clipboard
+    const url = `${window.location.origin}/spreadsheet/${sheet.id}`
+    navigator.clipboard.writeText(url)
+    alert("Spreadsheet URL copied to clipboard!")
+  }
+
+  const handleDelete = async () => {
+    if (confirm("Are you sure you want to delete this spreadsheet? This action cannot be undone.")) {
+      try {
+        const response = await spreadsheetApi.deleteSpreadsheet(sheet.id)
+        if (response.error) {
+          throw response.error
+        }
+        // Refresh the page to show updated list
+        window.location.reload()
+      } catch (e) {
+        console.error("Failed to delete spreadsheet:", e)
+      }
+    }
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      whileHover={{ scale: 1.02 }}
+      className="group"
+    >
+      <Card className="overflow-hidden transition-all hover:shadow-md">
+        <CardContent className="p-0">
+          <div className="flex items-center justify-between p-4 bg-muted/30">
+            <div className="flex items-center">
+              <FileSpreadsheet className="h-5 w-5 mr-2 text-primary" />
+              {isRenaming ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    handleRename()
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <Input
+                    value={newTitle}
+                    onChange={(e) => setNewTitle(e.target.value)}
+                    className="h-8 text-sm"
+                    autoFocus
+                  />
+                  <Button type="submit" size="sm" variant="ghost">
+                    Save
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setIsRenaming(false)}
+                  >
+                    Cancel
+                  </Button>
+                </form>
+              ) : (
+                <Link href={`/spreadsheet/${sheet.id}`}>
+                  <span className="font-medium text-gray-900">{sheet.title}</span>
+                </Link>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={handleToggleStar}
+              >
+                <Star
+                  className={`h-4 w-4 ${
+                    isStarred ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"
+                  }`}
+                />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setIsRenaming(true)}>
+                    Rename
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleDuplicate}>
+                    Duplicate
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleShare}>
+                    Share
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={handleDelete}
+                    className="text-destructive"
+                  >
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
-        </div>
-      </DashboardLayout>
+          <div className="p-4 border-t">
+            <p className="text-xs text-muted-foreground">
+              Last edited {formatDistanceToNow(new Date(sheet.updated_at))} ago
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  )
+}
+
+export default function DashboardPage() {
+  const { getSpreadsheets, createSpreadsheet, isLoaded, isSignedIn } = useSpreadsheetApi()
+  const [spreadsheets, setSpreadsheets] = useState<Spreadsheet[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState("")
+
+  useEffect(() => {
+    if (isLoaded && isSignedIn) {
+      loadSpreadsheets()
+    }
+  }, [isLoaded, isSignedIn])
+
+  async function loadSpreadsheets() {
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await getSpreadsheets()
+      if (response.error) {
+        throw response.error
+      }
+      setSpreadsheets(response.data || [])
+    } catch (e) {
+      console.error("Failed to load spreadsheets:", e)
+      setError(e instanceof Error ? e.message : "Failed to load spreadsheets")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleCreateSpreadsheet() {
+    try {
+      const response = await createSpreadsheet("Untitled Spreadsheet")
+      if (response.error) {
+        throw response.error
+      }
+      if (response.data?.[0]?.id) {
+        window.location.href = `/spreadsheet/${response.data[0].id}`
+      }
+    } catch (e) {
+      console.error("Failed to create spreadsheet:", e)
+    }
+  }
+
+  // Filter spreadsheets based on search query
+  const filteredSpreadsheets = spreadsheets.filter(sheet =>
+    sheet.title.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  // Filter starred and recent spreadsheets from filtered results
+  const starredSpreadsheets = filteredSpreadsheets.filter(sheet => sheet.data?.isStarred)
+  const recentSpreadsheets = filteredSpreadsheets
+    .filter(sheet => !sheet.data?.isStarred) // Exclude starred spreadsheets
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+
+  if (!isLoaded || loading) {
+    return (
+      <SidebarProvider>
+        <DashboardLayout>
+          <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+          </div>
+        </DashboardLayout>
+      </SidebarProvider>
     )
   }
 
   if (error) {
     return (
-      <DashboardLayout>
-        <div className="p-6 flex justify-center items-center min-h-[50vh]">
-          <div className="text-center">
-            <p className="text-red-500">Error: {error}</p>
-            <Button 
-              className="mt-4" 
-              onClick={() => window.location.reload()}
-            >
-              Retry
-            </Button>
+      <SidebarProvider>
+        <DashboardLayout>
+          <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
+            <div className="text-center">
+              <p className="text-red-500 mb-2">Error loading spreadsheets</p>
+              <Button onClick={loadSpreadsheets}>Try Again</Button>
+            </div>
           </div>
-        </div>
-      </DashboardLayout>
+        </DashboardLayout>
+      </SidebarProvider>
     )
   }
 
   return (
-    <DashboardLayout>
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex justify-between items-center mb-6">
-          <div className="flex-1 max-w-md">
-            <Input
-              type="text"
-              placeholder="Search spreadsheets..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full"
-            />
+    <SidebarProvider>
+      <DashboardLayout>
+        <div className="p-6">
+          <div className="mb-8 flex items-center justify-between">
+            <h2 className="text-3xl font-bold text-gray-900">Your Spreadsheets</h2>
+            <div className="flex items-center gap-4">
+              <div className="relative w-[400px]">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
+                <Input
+                  type="search"
+                  placeholder="Search For Anything...(Spreadsheet, Features, etc)"
+                  className="w-full bg-gray-100 pl-9 focus-visible:ring-1"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                    onClick={() => setSearchQuery("")}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              <Button onClick={handleCreateSpreadsheet} className="flex items-center gap-2">
+                <Plus className="h-5 w-5" />
+                New Spreadsheet
+              </Button>
+            </div>
           </div>
-          <Button onClick={handleCreateSpreadsheet} disabled={isLoading}>
-            Create Spreadsheet
-          </Button>
-        </div>
 
-        {error && (
-          <div className="bg-red-50 text-red-600 p-4 rounded-md mb-6">
-            {error}
-          </div>
-        )}
-
-        {isLoading ? (
-          <div className="flex justify-center items-center h-64">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-          </div>
-        ) : (
-          <div className="space-y-8">
-            {starredSpreadsheets.length > 0 && (
-              <div>
-                <h2 className="text-lg font-semibold mb-4">Starred</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {starredSpreadsheets.map((spreadsheet) => (
-                    <SpreadsheetCard
-                      key={spreadsheet.id}
-                      spreadsheet={spreadsheet}
-                      onStar={() => toggleStar(spreadsheet.id)}
-                    />
+          {searchQuery && filteredSpreadsheets.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-gray-500">No spreadsheets found matching "{searchQuery}"</p>
+            </div>
+          ) : (
+            <>
+              {/* Starred Spreadsheets */}
+              <div className="mb-8">
+                <div className="mb-4 flex items-center gap-2">
+                  <Star className="h-5 w-5 text-yellow-500" />
+                  <h3 className="text-xl font-semibold text-gray-900">Starred</h3>
+                </div>
+                <div className="grid gap-4 md:grid-cols-3">
+                  {starredSpreadsheets.map((sheet) => (
+                    <SpreadsheetCard key={sheet.id} sheet={sheet} />
                   ))}
+                  {starredSpreadsheets.length === 0 && (
+                    <p className="text-gray-500 col-span-3">No starred spreadsheets yet</p>
+                  )}
                 </div>
               </div>
-            )}
 
-            <div>
-              <h2 className="text-lg font-semibold mb-4">All Spreadsheets</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {unstarredSpreadsheets.map((spreadsheet) => (
-                  <SpreadsheetCard
-                    key={spreadsheet.id}
-                    spreadsheet={spreadsheet}
-                    onStar={() => toggleStar(spreadsheet.id)}
-                  />
-                ))}
+              {/* Recent Spreadsheets */}
+              <div>
+                <div className="mb-4 flex items-center gap-2">
+                  <Clock className="h-5 w-5 text-gray-500" />
+                  <h3 className="text-xl font-semibold text-gray-900">Recent</h3>
+                </div>
+                <div className="grid gap-4 md:grid-cols-3">
+                  {recentSpreadsheets.map((sheet) => (
+                    <SpreadsheetCard key={sheet.id} sheet={sheet} />
+                  ))}
+                  {recentSpreadsheets.length === 0 && (
+                    <p className="text-gray-500 col-span-3">No spreadsheets yet</p>
+                  )}
+                </div>
               </div>
-            </div>
-
-            {filteredSpreadsheets.length === 0 && (
-              <div className="text-center text-gray-500 py-8">
-                No spreadsheets found
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </DashboardLayout>
+            </>
+          )}
+        </div>
+      </DashboardLayout>
+    </SidebarProvider>
   )
 }
-
-const SpreadsheetCard = React.memo(function SpreadsheetCard({
-  spreadsheet,
-  onStar,
-}: {
-  spreadsheet: Spreadsheet
-  onStar: () => void
-}) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between">
-          <Link href={`/spreadsheet/${spreadsheet.id}`} className="flex-1">
-            <h3 className="font-medium text-gray-900 hover:underline truncate">{spreadsheet.title}</h3>
-          </Link>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onStar}>
-            <Star className={`h-4 w-4 ${spreadsheet.data?.isStarred ? "fill-yellow-400 text-yellow-400" : "text-gray-400"}`} />
-          </Button>
-        </div>
-      </CardContent>
-      <CardFooter className="p-4 pt-0 text-sm text-gray-500 flex items-center">
-        <Clock className="h-3.5 w-3.5 mr-1.5" />
-        {formatDistanceToNow(new Date(spreadsheet.updated_at), { addSuffix: true })}
-      </CardFooter>
-    </Card>
-  )
-})
-

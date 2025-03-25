@@ -48,7 +48,7 @@ export function useSpreadsheet() {
     }
   }, [spreadsheetApi, isLoaded, isSignedIn]);
 
-  const updateSpreadsheet = useCallback(async (id: string, data: SpreadsheetData) => {
+  const updateSpreadsheet = useCallback(async (id: string, spreadsheet: Partial<Spreadsheet>): Promise<Spreadsheet | null> => {
     // Check if session is ready
     if (!isLoaded || !isSignedIn) {
       setError('Authentication is not ready or user is not signed in');
@@ -58,8 +58,9 @@ export function useSpreadsheet() {
     setLoading(true);
     setError(null);
     try {
-      const result = await spreadsheetApi.updateSpreadsheet(id, data);
-      return result.data;
+      const { data, error } = await spreadsheetApi.updateSpreadsheet(id, spreadsheet);
+      if (error) throw error;
+      return data;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update spreadsheet');
       return null;

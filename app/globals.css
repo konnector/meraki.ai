@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Custom Font Face Declaration */
+@font-face {
+  font-family: 'CustomFont';
+  src: url('/fonts/a34f9d1faa5f3315-s.p.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Add utility class for the custom font */
+.font-custom {
+  font-family: 'CustomFont', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
