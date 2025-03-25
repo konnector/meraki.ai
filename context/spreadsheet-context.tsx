@@ -1,9 +1,10 @@
 "use client"
 
-import { createContext, useContext, useState, useCallback, type ReactNode, useRef } from "react"
+import { createContext, useContext, useState, useCallback, type ReactNode, useRef, useEffect } from "react"
 import { FormulaParser } from "@/lib/spreadsheet/FormulaParser"
 import { useFormulaCalculation } from "@/hooks/useFormulaCalculation"
 import { HistoryManager } from "@/lib/spreadsheet/HistoryManager"
+import { useSpreadsheetApi } from '@/lib/supabase/secure-api'
 
 type CellFormat = {
   bold?: boolean
@@ -44,7 +45,9 @@ type SpreadsheetContextType = {
   activeCell: string | null
   selection: Selection
   title: string
+  isStarred: boolean
   setTitle: (title: string) => void
+  toggleStar: () => void
   updateCell: (cellId: string, value: string) => void
   updateCellFormat: (cellId: string, format: Partial<CellFormat>) => void
   updateMultipleCellsFormat: (cellIds: string[], format: Partial<CellFormat>) => void
@@ -76,22 +79,95 @@ export function useSpreadsheet() {
   return context
 }
 
-export function SpreadsheetProvider({ children }: { children: ReactNode }) {
+export function SpreadsheetProvider({ children, spreadsheetId }: { children: ReactNode, spreadsheetId?: string }) {
   // Initialize state with empty values first
   const [cells, setCells] = useState<Cells>({});
   const [title, setTitle] = useState<string>("Untitled Spreadsheet");
   const [activeCell, setActiveCell] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
   const [clipboard, setClipboard] = useState<{cells: Cells, startCell: string} | null>(null);
+  const [isStarred, setIsStarred] = useState(false);
   const historyManager = useRef(new HistoryManager());
   const isHistoryAction = useRef(false);
+  const spreadsheetApi = useSpreadsheetApi();
+  const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Add formula calculation hook
   const { updateDependencies, calculateFormula, getAffectedCells } = useFormulaCalculation();
 
-  // Wrap setTitle to handle state
-  const handleSetTitle = useCallback((newTitle: string) => {
+  // Load initial spreadsheet data
+  useEffect(() => {
+    if (spreadsheetId) {
+      const loadSpreadsheet = async () => {
+        try {
+          const result = await spreadsheetApi.getSpreadsheet(spreadsheetId);
+          if (result.data) {
+            const { title: loadedTitle, data } = result.data;
+            setTitle(loadedTitle || "Untitled Spreadsheet");
+            setCells(data?.cells || {});
+            setIsStarred(data?.isStarred || false);
+          }
+        } catch (err) {
+          console.error('Failed to load spreadsheet:', err);
+        }
+      };
+      loadSpreadsheet();
+    }
+  }, [spreadsheetId]);
+
+  // Debounced save function
+  const saveSpreadsheetData = useCallback(async () => {
+    if (!spreadsheetId) return;
+
+    try {
+      await spreadsheetApi.updateSpreadsheet(spreadsheetId, {
+        cells,
+        isStarred,
+        meta: {
+          rowCount: 100, // Default grid size
+          columnCount: 26, // A-Z columns
+          lastModified: new Date().toISOString(),
+        }
+      });
+    } catch (err) {
+      console.error('Failed to save spreadsheet:', err);
+    }
+  }, [spreadsheetId, cells, isStarred]);
+
+  // Setup debounced save
+  useEffect(() => {
+    if (saveTimeout.current) {
+      clearTimeout(saveTimeout.current);
+    }
+    saveTimeout.current = setTimeout(saveSpreadsheetData, 1000);
+    return () => {
+      if (saveTimeout.current) {
+        clearTimeout(saveTimeout.current);
+      }
+    };
+  }, [cells, title, isStarred, saveSpreadsheetData]);
+
+  // Wrap setTitle to handle state and saving
+  const handleSetTitle = useCallback(async (newTitle: string) => {
     setTitle(newTitle);
+    if (spreadsheetId) {
+      // Update the spreadsheet data in Supabase
+      const result = await spreadsheetApi.getSpreadsheet(spreadsheetId);
+      if (result.data) {
+        await spreadsheetApi.updateSpreadsheet(spreadsheetId, {
+          ...result.data.data,
+          meta: {
+            ...result.data.data.meta,
+            lastModified: new Date().toISOString(),
+          }
+        });
+      }
+    }
+  }, [spreadsheetId, spreadsheetApi]);
+
+  // Add star toggle function
+  const toggleStar = useCallback(() => {
+    setIsStarred(prev => !prev);
   }, []);
 
   // Function to save current state to history
@@ -542,7 +618,9 @@ export function SpreadsheetProvider({ children }: { children: ReactNode }) {
     activeCell,
     selection,
     title,
+    isStarred,
     setTitle: handleSetTitle,
+    toggleStar,
     updateCell,
     updateCellFormat,
     updateMultipleCellsFormat,

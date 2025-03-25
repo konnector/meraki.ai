@@ -14,13 +14,16 @@ export interface SpreadsheetData {
   meta?: {
     rowCount: number;
     columnCount: number;
+    lastModified?: string;
   };
+  isStarred?: boolean;
 }
 
 export interface CellData {
-  value: string | number | null;
-  type?: 'text' | 'number' | 'formula';
+  value: string;
   formula?: string;
+  calculatedValue?: string | number;
+  error?: string;
   format?: CellFormat;
 }
 
@@ -29,6 +32,6 @@ export interface CellFormat {
   italic?: boolean;
   underline?: boolean;
   align?: 'left' | 'center' | 'right';
+  color?: string;
   backgroundColor?: string;
-  textColor?: string;
 } 

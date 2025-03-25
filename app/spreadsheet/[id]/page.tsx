@@ -1,8 +1,8 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
+import { useParams } from "next/navigation"
 import Link from "next/link"
 import SpreadsheetGrid from "@/components/SpreadSheet/spreadsheet-grid"
 import AIAssistantPanel from "@/components/SpreadSheet/ai-assistant-panel"
@@ -10,13 +10,13 @@ import Toolbar from "@/components/SpreadSheet/toolbar"
 import { FormulaBar } from "@/components/SpreadSheet/formula-bar"
 import DashboardLayout from "@/components/Dashboard/dashboard-layout"
 import KeyboardShortcutsHelp from "@/components/SpreadSheet/keyboard-shortcuts-help"
-import { ArrowLeft } from "lucide-react"
+import { ArrowLeft, Star } from "lucide-react"
 import { Input } from "@/components/ui/input"
-import { useSpreadsheet } from "@/context/spreadsheet-context"
+import { SpreadsheetProvider, useSpreadsheet } from "@/context/spreadsheet-context"
+import { Button } from "@/components/ui/button"
 
-
-export default function SpreadsheetPage({ params }: { params: { id: string } }) {
-  const { title, setTitle } = useSpreadsheet()
+function SpreadsheetContent() {
+  const { title, setTitle, isStarred, toggleStar } = useSpreadsheet()
   const [isEditingTitle, setIsEditingTitle] = useState(false)
 
   const handleTitleClick = () => {
@@ -29,13 +29,11 @@ export default function SpreadsheetPage({ params }: { params: { id: string } }) 
 
   const handleTitleBlur = () => {
     setIsEditingTitle(false)
-    // Here you would typically save the title to your backend
   }
 
   const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       setIsEditingTitle(false)
-      // Here you would typically save the title to your backend
     } else if (e.key === "Escape") {
       setIsEditingTitle(false)
     }
@@ -73,6 +71,15 @@ export default function SpreadsheetPage({ params }: { params: { id: string } }) 
                 </h1>
               )}
 
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleStar}
+                className={isStarred ? "text-yellow-400" : "text-gray-400"}
+              >
+                <Star className="h-5 w-5" />
+              </Button>
+
               <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">Saved</span>
             </div>
             <div className="flex items-center gap-2">
@@ -91,6 +98,21 @@ export default function SpreadsheetPage({ params }: { params: { id: string } }) 
         </main>
       </div>
     </DashboardLayout>
+  )
+}
+
+export default function SpreadsheetPage() {
+  const params = useParams()
+  const spreadsheetId = typeof params?.id === 'string' ? params.id : null
+
+  if (!spreadsheetId) {
+    return <div>Invalid spreadsheet ID</div>
+  }
+
+  return (
+    <SpreadsheetProvider spreadsheetId={spreadsheetId}>
+      <SpreadsheetContent />
+    </SpreadsheetProvider>
   )
 }
 

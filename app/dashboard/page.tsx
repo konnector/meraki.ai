@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useCallback, useRef } from "react"
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -9,24 +9,17 @@ import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PlusIcon, Search, FileSpreadsheet, Star, Clock } from "lucide-react"
 import DashboardLayout from "@/components/Dashboard/dashboard-layout"
-import { useSpreadsheet } from "@/hooks/useSpreadsheet"
+import { useSpreadsheetApi } from "@/lib/supabase/secure-api"
 import { formatDistanceToNow } from "date-fns"
 import { useSession } from "@clerk/nextjs"
-
-type Spreadsheet = {
-  id: string
-  title: string
-  created_at: string
-  updated_at: string
-  starred?: boolean // We'll manage this on the client side for now
-}
+import type { Spreadsheet } from "@/lib/supabase/types"
 
 export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [spreadsheets, setSpreadsheets] = useState<Spreadsheet[]>([])
-  const [starred, setStarred] = useState<Record<string, boolean>>({}) // Track starred items separately
   const [isLoading, setIsLoading] = useState(true)
-  const { getSpreadsheets, createSpreadsheet, loading, error } = useSpreadsheet()
+  const [error, setError] = useState<string | null>(null)
+  const spreadsheetApi = useSpreadsheetApi()
   const router = useRouter()
   const dataFetchedRef = useRef(false)
   const { isLoaded, isSignedIn, session } = useSession()
@@ -48,44 +41,89 @@ export default function DashboardPage() {
     async function loadSpreadsheets() {
       try {
         setIsLoading(true)
-        const data = await getSpreadsheets()
-        setSpreadsheets(Array.isArray(data) ? data : [])
+        const result = await spreadsheetApi.getSpreadsheets()
+        if (result.error) {
+          throw new Error(result.error.message)
+        }
+        setSpreadsheets(result.data || [])
         dataFetchedRef.current = true
       } catch (err) {
         console.error("Failed to load spreadsheets:", err)
+        setError(err instanceof Error ? err.message : "Failed to load spreadsheets")
       } finally {
         setIsLoading(false)
       }
     }
 
     loadSpreadsheets()
-  }, [isLoaded, isSignedIn, getSpreadsheets]) // Include Clerk loading state dependencies
+  }, [isLoaded, isSignedIn, spreadsheetApi])
 
-  const toggleStar = useCallback((id: string) => {
-    setStarred(prev => ({ ...prev, [id]: !prev[id] }))
-  }, [])
+  const toggleStar = useCallback(async (id: string) => {
+    const spreadsheet = spreadsheets.find(s => s.id === id);
+    if (!spreadsheet) return;
+
+    const isCurrentlyStarred = spreadsheet.data?.isStarred || false;
+    
+    try {
+      const result = await spreadsheetApi.updateSpreadsheet(id, {
+        ...spreadsheet.data,
+        isStarred: !isCurrentlyStarred
+      });
+
+      if (result.error) {
+        throw new Error(result.error.message)
+      }
+
+      setSpreadsheets(prev => prev.map(s => 
+        s.id === id 
+          ? { 
+              ...s, 
+              data: { 
+                ...s.data, 
+                isStarred: !isCurrentlyStarred 
+              } 
+            }
+          : s
+      ));
+    } catch (err) {
+      console.error("Failed to update star status:", err);
+      setError(err instanceof Error ? err.message : "Failed to update star status")
+    }
+  }, [spreadsheets, spreadsheetApi]);
 
   // Create a new spreadsheet and redirect to it
   const handleCreateSpreadsheet = useCallback(async () => {
     try {
-      const newSpreadsheet = await createSpreadsheet("Untitled Spreadsheet")
-      if (newSpreadsheet?.id) {
-        router.push(`/spreadsheet/${newSpreadsheet.id}`)
+      setIsLoading(true)
+      const result = await spreadsheetApi.createSpreadsheet("Untitled Spreadsheet")
+      if (result.error) {
+        throw new Error(result.error.message)
+      }
+      if (result.data?.id) {
+        router.push(`/spreadsheet/${result.data.id}`)
       }
     } catch (err) {
       console.error("Failed to create new spreadsheet:", err)
+      setError(err instanceof Error ? err.message : "Failed to create spreadsheet")
+    } finally {
+      setIsLoading(false)
     }
-  }, [createSpreadsheet, router])
+  }, [spreadsheetApi, router])
 
-  const filteredSpreadsheets = spreadsheets.filter((sheet) =>
-    sheet.title.toLowerCase().includes(searchQuery.toLowerCase()),
-  )
+  // Filter spreadsheets based on search query
+  const filteredSpreadsheets = useMemo(() => {
+    return spreadsheets.filter(spreadsheet =>
+      spreadsheet.title.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  }, [spreadsheets, searchQuery])
 
-  const starredSpreadsheets = filteredSpreadsheets.filter((sheet) => starred[sheet.id])
-  const recentSpreadsheets = [...filteredSpreadsheets].sort((a, b) => {
-    // Sort by updated_at date, newest first
-    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-  })
+  // Separate starred and unstarred spreadsheets
+  const { starredSpreadsheets, unstarredSpreadsheets } = useMemo(() => {
+    return {
+      starredSpreadsheets: filteredSpreadsheets.filter(s => s.data?.isStarred),
+      unstarredSpreadsheets: filteredSpreadsheets.filter(s => !s.data?.isStarred)
+    }
+  }, [filteredSpreadsheets])
 
   const formatDate = useCallback((dateString: string) => {
     try {
@@ -147,98 +185,69 @@ export default function DashboardPage() {
 
   return (
     <DashboardLayout>
-      <div className="p-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">Your Spreadsheets</h1>
-          <div className="flex items-center gap-2 w-full md:w-auto">
-            <div className="relative flex-1 md:w-64">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-              <Input
-                type="text"
-                placeholder="Search spreadsheets..."
-                className="pl-9"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-            <Button 
-              className="bg-gray-900 text-white hover:bg-gray-800"
-              onClick={handleCreateSpreadsheet}
-              disabled={loading}
-            >
-              <PlusIcon className="h-4 w-4 mr-2" />
-              New
-            </Button>
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex-1 max-w-md">
+            <Input
+              type="text"
+              placeholder="Search spreadsheets..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full"
+            />
           </div>
+          <Button onClick={handleCreateSpreadsheet} disabled={isLoading}>
+            Create Spreadsheet
+          </Button>
         </div>
 
-        <Tabs defaultValue="all">
-          <TabsList className="mb-6">
-            <TabsTrigger value="all">All</TabsTrigger>
-            <TabsTrigger value="starred">Starred</TabsTrigger>
-            <TabsTrigger value="recent">Recent</TabsTrigger>
-          </TabsList>
+        {error && (
+          <div className="bg-red-50 text-red-600 p-4 rounded-md mb-6">
+            {error}
+          </div>
+        )}
 
-          <TabsContent value="all" className="space-y-6">
-            {filteredSpreadsheets.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-gray-500">No spreadsheets found</p>
+        {isLoading ? (
+          <div className="flex justify-center items-center h-64">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+          </div>
+        ) : (
+          <div className="space-y-8">
+            {starredSpreadsheets.length > 0 && (
+              <div>
+                <h2 className="text-lg font-semibold mb-4">Starred</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {starredSpreadsheets.map((spreadsheet) => (
+                    <SpreadsheetCard
+                      key={spreadsheet.id}
+                      spreadsheet={spreadsheet}
+                      onStar={() => toggleStar(spreadsheet.id)}
+                    />
+                  ))}
+                </div>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredSpreadsheets.map((sheet) => (
-                  <SpreadsheetCard 
-                    key={sheet.id} 
-                    spreadsheet={sheet} 
-                    isStarred={!!starred[sheet.id]}
-                    onToggleStar={toggleStar} 
-                    formattedDate={formatDate(sheet.updated_at)}
+            )}
+
+            <div>
+              <h2 className="text-lg font-semibold mb-4">All Spreadsheets</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {unstarredSpreadsheets.map((spreadsheet) => (
+                  <SpreadsheetCard
+                    key={spreadsheet.id}
+                    spreadsheet={spreadsheet}
+                    onStar={() => toggleStar(spreadsheet.id)}
                   />
                 ))}
               </div>
-            )}
-          </TabsContent>
+            </div>
 
-          <TabsContent value="starred" className="space-y-6">
-            {starredSpreadsheets.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-gray-500">No starred spreadsheets</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {starredSpreadsheets.map((sheet) => (
-                  <SpreadsheetCard 
-                    key={sheet.id} 
-                    spreadsheet={sheet} 
-                    isStarred={true}
-                    onToggleStar={toggleStar} 
-                    formattedDate={formatDate(sheet.updated_at)}
-                  />
-                ))}
+            {filteredSpreadsheets.length === 0 && (
+              <div className="text-center text-gray-500 py-8">
+                No spreadsheets found
               </div>
             )}
-          </TabsContent>
-
-          <TabsContent value="recent" className="space-y-6">
-            {recentSpreadsheets.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-gray-500">No recent spreadsheets</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {recentSpreadsheets.map((sheet) => (
-                  <SpreadsheetCard 
-                    key={sheet.id} 
-                    spreadsheet={sheet} 
-                    isStarred={!!starred[sheet.id]}
-                    onToggleStar={toggleStar}
-                    formattedDate={formatDate(sheet.updated_at)} 
-                  />
-                ))}
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   )
@@ -246,35 +255,26 @@ export default function DashboardPage() {
 
 const SpreadsheetCard = React.memo(function SpreadsheetCard({
   spreadsheet,
-  isStarred,
-  onToggleStar,
-  formattedDate,
+  onStar,
 }: {
   spreadsheet: Spreadsheet
-  isStarred: boolean
-  onToggleStar: (id: string) => void
-  formattedDate: string
+  onStar: () => void
 }) {
   return (
-    <Card className="overflow-hidden">
-      <Link href={`/spreadsheet/${spreadsheet.id}`}>
-        <div className="h-36 bg-gray-100 flex items-center justify-center border-b border-gray-200">
-          <FileSpreadsheet className="h-12 w-12 text-gray-400" />
-        </div>
-      </Link>
+    <Card>
       <CardContent className="p-4">
-        <div className="flex items-start justify-between">
+        <div className="flex items-center justify-between">
           <Link href={`/spreadsheet/${spreadsheet.id}`} className="flex-1">
             <h3 className="font-medium text-gray-900 hover:underline truncate">{spreadsheet.title}</h3>
           </Link>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onToggleStar(spreadsheet.id)}>
-            <Star className={`h-4 w-4 ${isStarred ? "fill-yellow-400 text-yellow-400" : "text-gray-400"}`} />
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onStar}>
+            <Star className={`h-4 w-4 ${spreadsheet.data?.isStarred ? "fill-yellow-400 text-yellow-400" : "text-gray-400"}`} />
           </Button>
         </div>
       </CardContent>
       <CardFooter className="p-4 pt-0 text-sm text-gray-500 flex items-center">
         <Clock className="h-3.5 w-3.5 mr-1.5" />
-        {formattedDate}
+        {formatDistanceToNow(new Date(spreadsheet.updated_at), { addSuffix: true })}
       </CardFooter>
     </Card>
   )

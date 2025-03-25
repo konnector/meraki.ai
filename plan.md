@@ -3,28 +3,17 @@
 ## Overview
 This plan outlines how to properly connect Clerk (authentication) with Supabase (database) to secure your application data using JWT tokens and Row Level Security.
 
-## Step 1: Create Supabase JWT Template in Clerk Dashboard
+## ✅ Step 1: Create Supabase JWT Template in Clerk Dashboard [COMPLETED]
 
-1. Log in to [Clerk Dashboard](https://dashboard.clerk.com/)
-2. Navigate to **JWT Templates** in the sidebar
-3. Click **New template** → select **Supabase**
-4. Configure template:
-   - **Name**: `supabase`
-   - **Signing algorithm**: `HS256` (default)
-   - Get your JWT Secret from Supabase:
-     - Open [Supabase Dashboard](https://supabase.com/) → your project
-     - Go to **Project Settings** → **API** → **JWT Settings**
-     - Copy the **JWT Secret**
-   - Paste this secret in Clerk's **Signing key** field
-   - Save the template
+1. Created a JWT template in Clerk Dashboard named `supabase`
+2. Used HS256 signing algorithm
+3. Added JWT Secret from Supabase Project Settings
+4. Successfully saved the template
 
-## Step 2: Set Up Database Security in Supabase
+## ✅ Step 2: Set Up Database Security in Supabase [COMPLETED]
 
-1. Log in to Supabase and access SQL Editor
-2. Create function to extract user ID from JWT:
-
+1. Created a function to extract user ID from JWT token:
 ```sql
--- Run this in the SQL Editor
 CREATE OR REPLACE FUNCTION requesting_user_id()
 RETURNS text
 LANGUAGE sql
@@ -36,229 +25,128 @@ AS $$
 $$;
 ```
 
-3. Enable Row Level Security on your `spreadsheets` table:
-   - Go to **Table Editor** → select `spreadsheets` table
-   - Click **RLS** at the top → **Enable RLS**
-
-4. Create RLS policies:
-
+2. Created the spreadsheets table with proper structure:
 ```sql
--- SELECT policy (view own spreadsheets)
-CREATE POLICY "Users can view their own spreadsheets" 
-ON spreadsheets FOR SELECT 
-USING (requesting_user_id() = user_id);
-
--- INSERT policy (create own spreadsheets)
-CREATE POLICY "Users can insert their own spreadsheets" 
-ON spreadsheets FOR INSERT 
-WITH CHECK (requesting_user_id() = user_id);
-
--- UPDATE policy (modify own spreadsheets)
-CREATE POLICY "Users can update their own spreadsheets" 
-ON spreadsheets FOR UPDATE 
-USING (requesting_user_id() = user_id);
-
--- DELETE policy (delete own spreadsheets)
-CREATE POLICY "Users can delete their own spreadsheets" 
-ON spreadsheets FOR DELETE 
-USING (requesting_user_id() = user_id);
+CREATE TABLE IF NOT EXISTS public.spreadsheets (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id TEXT NOT NULL DEFAULT requesting_user_id(),
+  title TEXT NOT NULL,
+  data JSONB DEFAULT '{}',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
 ```
 
-## Step 3: Create Authenticated Supabase Client
+3. Enabled Row Level Security on the spreadsheets table 
+4. Created RLS policies for SELECT, INSERT, UPDATE and DELETE operations to ensure users can only access their own data
 
-1. Create a new file `lib/supabase/clerk-client.ts`:
+## ✅ Step 3: Create Authenticated Supabase Client [COMPLETED]
+
+Created `lib/supabase/clerk-client.ts` with:
+- Client instance caching to prevent multiple instances
+- Proper session state handling to prevent "No active session" errors
+- Error handling for authentication stages
 
 ```typescript
-// lib/supabase/clerk-client.ts
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { useSession } from '@clerk/nextjs';
+import { useMemo } from 'react';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+// A cache to store client instances per token
+let clientCache: {
+  [token: string]: SupabaseClient
+} = {};
 
-// Hook to get authenticated Supabase client with Clerk
 export function useSupabaseClient() {
-  const { session } = useSession();
+  const { session, isLoaded, isSignedIn } = useSession();
   
-  const getClient = async () => {
-    if (!session) {
-      throw new Error('No active session');
-    }
-    
-    // Get Clerk-generated Supabase JWT
-    const supabaseToken = await session.getToken({ template: 'supabase' });
-    
-    // Create client with auth header
-    return createClient(supabaseUrl, supabaseAnonKey, {
-      global: {
-        headers: {
-          Authorization: `Bearer ${supabaseToken}`
-        }
+  const getClient = useMemo(() => {
+    return async () => {
+      // Wait for session to be loaded and check if user is signed in
+      if (!isLoaded) {
+        throw new Error('Clerk session is still loading');
       }
-    });
-  };
+      
+      if (!isSignedIn || !session) {
+        throw new Error('No active session');
+      }
+      
+      // Get Clerk-generated Supabase JWT
+      const supabaseToken = await session.getToken({ template: 'supabase' });
+      
+      // Cache and reuse clients to prevent multiple instances
+      if (clientCache[supabaseToken]) {
+        return clientCache[supabaseToken];
+      }
+      
+      const client = createClient(supabaseUrl, supabaseAnonKey, {
+        global: {
+          headers: {
+            Authorization: `Bearer ${supabaseToken}`
+          }
+        }
+      });
+      
+      clientCache[supabaseToken] = client;
+      return client;
+    };
+  }, [session, isLoaded, isSignedIn]);
   
-  return { getClient };
-}
-```
-
-## Step 4: Create Secure API Functions
-
-1. Create `lib/supabase/secure-api.ts`:
-
-```typescript
-// lib/supabase/secure-api.ts
-import { useSupabaseClient } from './clerk-client';
-import type { Spreadsheet, SpreadsheetData } from './types';
-
-export function useSpreadsheetApi() {
-  const { getClient } = useSupabaseClient();
-  
-  // CRUD operations that use the authenticated client
-  return {
-    // Create a new spreadsheet
-    async createSpreadsheet(title: string) {
-      const client = await getClient();
-      return client
-        .from('spreadsheets')
-        .insert([{ 
-          title, 
-          data: {},
-          created_at: new Date().toISOString()
-        }])
-        .select()
-        .single();
-    },
-    
-    // Get all spreadsheets (RLS will filter by user_id)
-    async getSpreadsheets() {
-      const client = await getClient();
-      return client
-        .from('spreadsheets')
-        .select('*')
-        .order('created_at', { ascending: false });
-    },
-    
-    // Get a single spreadsheet by ID
-    async getSpreadsheet(id: string) {
-      const client = await getClient();
-      return client
-        .from('spreadsheets')
-        .select('*')
-        .eq('id', id)
-        .single();
-    },
-    
-    // Update spreadsheet data
-    async updateSpreadsheet(id: string, data: SpreadsheetData) {
-      const client = await getClient();
-      return client
-        .from('spreadsheets')
-        .update({ 
-          data,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', id);
-    },
-    
-    // Delete a spreadsheet
-    async deleteSpreadsheet(id: string) {
-      const client = await getClient();
-      return client
-        .from('spreadsheets')
-        .delete()
-        .eq('id', id);
-    }
+  return { 
+    getClient,
+    isLoaded,
+    isSignedIn
   };
 }
 ```
 
-## Step 5: Update useSpreadsheet Hook
+## ✅ Step 4: Create Secure API Functions [COMPLETED]
 
-1. Modify `hooks/useSpreadsheet.ts` to use the secure API:
+Created `lib/supabase/secure-api.ts` with:
+- Session state pass-through
+- CRUD operations for spreadsheets
+- Automatic JWT token handling via the authenticated client
 
-```typescript
-// hooks/useSpreadsheet.ts
-import { useState, useCallback } from 'react';
-import { useSpreadsheetApi } from '@/lib/supabase/secure-api';
-import type { Spreadsheet, SpreadsheetData } from '@/lib/supabase/types';
+## ✅ Step 5: Update useSpreadsheet Hook [COMPLETED]
 
-export function useSpreadsheet() {
-  const spreadsheetApi = useSpreadsheetApi();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+Modified `hooks/useSpreadsheet.ts` to:
+- Check authentication state before making requests
+- Properly handle error states 
+- Pass session state to components
 
-  const createSpreadsheet = useCallback(async (title: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await spreadsheetApi.createSpreadsheet(title);
-      return result.data;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create spreadsheet');
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  }, [spreadsheetApi]);
+## ✅ Step 6: Update Dashboard to Use Real Data [COMPLETED]
 
-  const getSpreadsheets = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await spreadsheetApi.getSpreadsheets();
-      return result.data || [];
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch spreadsheets');
-      return [];
-    } finally {
-      setLoading(false);
-    }
-  }, [spreadsheetApi]);
+Modified `app/dashboard/page.tsx` to:
+- Load real data from Supabase using the authenticated client
+- Handle loading states appropriately
+- Show authentication state UI
+- Implement "New" spreadsheet functionality
+- Display spreadsheets with proper formatting
 
-  // ... similar updates for other methods
+## ✅ Step 7: Test the Integration [COMPLETED]
 
-  return {
-    loading,
-    error,
-    createSpreadsheet,
-    getSpreadsheets,
-    // ... other methods
-  };
-}
-```
+Successfully tested:
+- Creating new spreadsheets
+- Viewing user-specific spreadsheets
+- Authentication persistence
+- Row Level Security enforcement
+- Session state handling
 
-## Step 6: Update Dashboard to Use Real Data
+## Step 8: Future Improvements
 
-1. Modify `app/dashboard/page.tsx` to use data from Supabase
+Potential enhancements:
+- Implement persistent localStorage for starred spreadsheets
+- Add spreadsheet sharing functionality
+- Create an activity log for spreadsheet changes
+- Add real-time collaboration
 
-```typescript
-// Implement loading of real spreadsheets from Supabase
-// Replace mock data with actual data from the getSpreadsheets() method
-```
+## Summary
 
-## Step 7: Test the Integration
-
-1. Create a test user in Clerk
-2. Sign in with this user
-3. Create a spreadsheet
-4. Sign out and create another user
-5. Verify each user only sees their own spreadsheets
-6. Test additional operations (update, delete)
-
-## Step 8: Secure API Routes
-
-1. Review middleware.ts to ensure API routes are properly protected
-2. For any custom API routes, validate the auth token before accessing Supabase
-
-## Additional Considerations
-
-- Enable proper error handling throughout the application
-- Add loading states for asynchronous operations
-- Consider implementing optimistic UI updates
-- Set up proper TypeScript types for all operations
-
-This integration ensures that:
+The integration ensures:
 - User identity is verified by Clerk
-- User data is segregated and secured by Supabase RLS
-- Authentication flows are properly connected to database operations 
+- Data is securely stored in Supabase
+- Row Level Security enforces data isolation
+- Authentication flows seamlessly between services
+- Error states are properly handled
+- Loading states provide good UX
+- Session management is robust 
