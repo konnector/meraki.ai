@@ -27,6 +27,14 @@ Meraki.ai is a modern web application built with Next.js 15, TypeScript, and a c
 - ✅ **Dashboard Interface**: View, search, and organize spreadsheets
 - ✅ **Spreadsheet Management**: Create, read, update, delete operations
 - ✅ **User-Isolated Data**: Each user can only see their own spreadsheets
+- ✅ **Spreadsheet Features**:
+  - Real-time data saving
+  - Title editing with auto-save
+  - Star/unstar functionality
+  - Cell formatting
+  - Formula support
+  - Copy/paste functionality
+  - Undo/redo support
 - ⬜ **Sharing Functionality**: Coming soon
 - ⬜ **Collaboration Tools**: Coming soon
 - ⬜ **AI Integration**: Coming soon
@@ -40,16 +48,63 @@ Meraki.ai is a modern web application built with Next.js 15, TypeScript, and a c
 │   ├── sign-in/        # Authentication pages
 │   └── sign-up/        # User registration
 ├── components/          # Reusable UI components
+│   ├── Dashboard/      # Dashboard-specific components
+│   ├── SpreadSheet/    # Spreadsheet editor components
+│   └── ui/             # Common UI components
 ├── hooks/              # Custom React hooks
 │   └── useSpreadsheet.ts # Hook for spreadsheet operations
 ├── lib/                # Utility functions and configurations
 │   ├── supabase/      # Supabase client configuration
 │   │   ├── client.ts  # Basic client
 │   │   ├── clerk-client.ts # Auth integration
+│   │   ├── types.ts   # Type definitions
 │   │   └── secure-api.ts # Secure database operations
+│   └── spreadsheet/   # Spreadsheet logic
+│       ├── FormulaParser.ts # Formula parsing
+│       └── HistoryManager.ts # Undo/redo functionality
 ├── context/           # React context providers
 ├── types/             # TypeScript type definitions
 └── public/            # Static assets
+```
+
+## Data Storage
+
+Meraki.ai uses Supabase for data storage with the following structure:
+
+### Spreadsheets Table
+```sql
+CREATE TABLE IF NOT EXISTS public.spreadsheets (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id TEXT NOT NULL DEFAULT requesting_user_id(),
+  title TEXT NOT NULL,
+  data JSONB DEFAULT '{}',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+```
+
+The `data` column stores spreadsheet content in JSONB format:
+```json
+{
+  "cells": {
+    "A1": {
+      "value": "string",
+      "formula": "=SUM(B1:B5)",
+      "calculatedValue": "number",
+      "format": {
+        "bold": true,
+        "italic": false,
+        "align": "center"
+      }
+    }
+  },
+  "isStarred": boolean,
+  "meta": {
+    "rowCount": number,
+    "columnCount": number,
+    "lastModified": "timestamp"
+  }
+}
 ```
 
 ## Authentication & Database Integration

@@ -10,12 +10,24 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator"
 import DashboardLayout from "@/components/Dashboard/dashboard-layout"
 import { User, Bell, Shield, Palette, Save, Trash2, LogOut } from "lucide-react"
+import { useUser } from "@clerk/nextjs"
+import { useToast } from "@/components/ui/use-toast"
+
+interface FormState {
+  theme: 'light' | 'dark' | 'system';
+  notifications: {
+    email: boolean;
+    push: boolean;
+    updates: boolean;
+    newsletter: boolean;
+  };
+}
 
 export default function SettingsPage() {
-  const [formState, setFormState] = useState({
-    name: "John Doe",
-    email: "john.doe@example.com",
-    language: "english",
+  const { user, isLoaded } = useUser()
+  const { toast } = useToast()
+  
+  const [formState, setFormState] = useState<FormState>({
     theme: "light",
     notifications: {
       email: true,
@@ -25,14 +37,14 @@ export default function SettingsPage() {
     },
   })
 
-  const handleInputChange = (field: string, value: string) => {
+  const handleInputChange = (field: keyof FormState, value: string) => {
     setFormState((prev) => ({
       ...prev,
       [field]: value,
     }))
   }
 
-  const handleNotificationChange = (field: string, value: boolean) => {
+  const handleNotificationChange = (field: keyof FormState['notifications'], value: boolean) => {
     setFormState((prev) => ({
       ...prev,
       notifications: {
@@ -40,6 +52,45 @@ export default function SettingsPage() {
         [field]: value,
       },
     }))
+  }
+
+  const handleProfileUpdate = async () => {
+    try {
+      await user?.update({
+        firstName: user?.firstName || "",
+        lastName: user?.lastName || "",
+      })
+      toast({
+        title: "Profile updated",
+        description: "Your profile has been updated successfully.",
+      })
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update profile. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleDeleteAccount = async () => {
+    try {
+      await user?.delete()
+      toast({
+        title: "Account deleted",
+        description: "Your account has been deleted successfully.",
+      })
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete account. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  if (!isLoaded) {
+    return <div>Loading...</div>
   }
 
   return (
@@ -69,26 +120,43 @@ export default function SettingsPage() {
 
           <TabsContent value="account" className="space-y-6">
             <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
-              <h2 className="text-xl font-semibold text-gray-900">Profile Information</h2>
+              <div className="flex items-center gap-4 mb-6">
+                <img 
+                  src={user?.imageUrl} 
+                  alt={user?.fullName || "Profile"} 
+                  className="w-20 h-20 rounded-full"
+                />
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900">Profile Information</h2>
+                  <p className="text-sm text-gray-600">Update your profile information and email settings</p>
+                </div>
+              </div>
+              
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label htmlFor="name">Full Name</Label>
-                  <Input id="name" value={formState.name} onChange={(e) => handleInputChange("name", e.target.value)} />
+                  <Input 
+                    id="name" 
+                    value={user?.fullName || ""} 
+                    disabled
+                    className="bg-gray-50"
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="email">Email Address</Label>
                   <Input
                     id="email"
                     type="email"
-                    value={formState.email}
-                    onChange={(e) => handleInputChange("email", e.target.value)}
+                    value={user?.primaryEmailAddress?.emailAddress || ""}
+                    disabled
+                    className="bg-gray-50"
                   />
                 </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="language">Language</Label>
-                <Select value={formState.language} onValueChange={(value) => handleInputChange("language", value)}>
+                <Select defaultValue="english">
                   <SelectTrigger id="language">
                     <SelectValue placeholder="Select language" />
                   </SelectTrigger>
@@ -102,18 +170,22 @@ export default function SettingsPage() {
                 </Select>
               </div>
 
-              <div className="flex justify-end">
-                <Button className="bg-gray-900 text-white hover:bg-gray-800">
-                  <Save className="h-4 w-4 mr-2" />
-                  Save Changes
-                </Button>
-              </div>
+              <Button 
+                className="bg-gray-900 text-white hover:bg-gray-800"
+                onClick={handleProfileUpdate}
+              >
+                <Save className="h-4 w-4 mr-2" />
+                Save Changes
+              </Button>
             </div>
 
             <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
               <h2 className="text-xl font-semibold text-gray-900">Danger Zone</h2>
               <p className="text-gray-600">Once you delete your account, there is no going back. Please be certain.</p>
-              <Button variant="destructive">
+              <Button 
+                variant="destructive"
+                onClick={handleDeleteAccount}
+              >
                 <Trash2 className="h-4 w-4 mr-2" />
                 Delete Account
               </Button>
@@ -132,7 +204,7 @@ export default function SettingsPage() {
                   </div>
                   <Switch
                     checked={formState.notifications.email}
-                    onCheckedChange={(checked) => handleNotificationChange("email", checked)}
+                    onCheckedChange={(checked) => handleNotificationChange ("email", checked)}
                   />
                 </div>
 
@@ -209,7 +281,7 @@ export default function SettingsPage() {
                     className={`border-2 rounded-lg p-4 cursor-pointer ${
                       formState.theme === "light" ? "border-gray-900" : "border-gray-200"
                     }`}
-                    onClick={() => handleInputChange("theme", "light")}
+                    onClick={() => handleInputChange ("theme", "light")}
                   >
                     <div className="h-24 bg-white border border-gray-200 rounded-md mb-2"></div>
                     <p className="text-sm font-medium text-center">Light</p>
