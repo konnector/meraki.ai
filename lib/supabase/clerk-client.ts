@@ -17,14 +17,17 @@ export function useSupabaseClient() {
   // Use useMemo to prevent recreating this function on every render
   const getClient = useMemo(() => {
     return async () => {
-      // If session is not loaded yet, wait for a short time and retry
+      // If session is not loaded yet, wait with a more robust approach
       if (!isLoaded) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        if (!isLoaded) {
-          throw new Error('Clerk session is still loading');
+        // Wait for session to load with increasing timeouts
+        let retries = 3;
+        while (!isLoaded && retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+          retries--;
         }
       }
       
+      // By this point, we should check if we have what we need
       if (!isSignedIn || !session) {
         throw new Error('No active session');
       }

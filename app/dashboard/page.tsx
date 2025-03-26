@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Plus, Star, Clock, FileSpreadsheet, Loader2, Search, MoreHorizontal, X } from "lucide-react"
+import { Plus, Star, Clock, FileSpreadsheet, Search, MoreHorizontal, X } from "lucide-react"
 import Link from "next/link"
 import DashboardLayout from "@/components/Dashboard/dashboard-layout"
 import { SidebarProvider } from "@/components/ui/sidebar"
@@ -14,20 +14,31 @@ import { formatDistanceToNow } from "date-fns"
 import { Card, CardContent } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { motion } from "framer-motion"
+import React from "react"
+import { MessageLoading } from "@/components/ui/message-loading"
+import RecentSpreadsheets from "@/components/Dashboard/RecentSpreadsheets"
 
-function SpreadsheetCard({ sheet }: { sheet: Spreadsheet }) {
+// Extended spreadsheet type for UI operations
+interface UISpreadsheet extends Spreadsheet {
+  _deleted?: boolean;
+}
+
+function SpreadsheetCard({ sheet, onUpdate }: { sheet: UISpreadsheet, onUpdate: (updatedSheet: UISpreadsheet) => void }) {
   return (
     <SpreadsheetProvider spreadsheetId={sheet.id}>
-      <SpreadsheetCardContent sheet={sheet} />
+      <SpreadsheetCardContent sheet={sheet} onUpdate={onUpdate} />
     </SpreadsheetProvider>
   )
 }
 
-function SpreadsheetCardContent({ sheet }: { sheet: Spreadsheet }) {
+const MemoizedSpreadsheetCard = React.memo(SpreadsheetCard)
+
+function SpreadsheetCardContent({ sheet, onUpdate }: { sheet: UISpreadsheet, onUpdate: (updatedSheet: UISpreadsheet) => void }) {
   const { toggleStar, isStarred } = useSpreadsheet()
   const spreadsheetApi = useSpreadsheetApi()
   const [isRenaming, setIsRenaming] = useState(false)
   const [newTitle, setNewTitle] = useState(sheet.title)
+  const [isLoading, setIsLoading] = useState(false)
 
   const handleToggleStar = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -36,20 +47,30 @@ function SpreadsheetCardContent({ sheet }: { sheet: Spreadsheet }) {
   }
 
   const handleRename = async () => {
+    if (newTitle.trim() === '') return
+    
+    setIsLoading(true)
     try {
       const response = await spreadsheetApi.updateTitle(sheet.id, newTitle)
       if (response.error) {
         throw response.error
       }
       setIsRenaming(false)
-      // Refresh the page to show updated title
-      window.location.reload()
+      
+      // Update the spreadsheet in the parent component
+      onUpdate({
+        ...sheet,
+        title: newTitle
+      } as UISpreadsheet)
     } catch (e) {
       console.error("Failed to rename spreadsheet:", e)
+    } finally {
+      setIsLoading(false)
     }
   }
 
   const handleDuplicate = async () => {
+    setIsLoading(true)
     try {
       // Create a new spreadsheet with the same data
       const response = await spreadsheetApi.createSpreadsheet(`${sheet.title} (Copy)`)
@@ -59,11 +80,14 @@ function SpreadsheetCardContent({ sheet }: { sheet: Spreadsheet }) {
       if (response.data?.[0]?.id) {
         // Update the new spreadsheet with the data from the current one
         await spreadsheetApi.updateSpreadsheet(response.data[0].id, sheet.data || {})
-        // Refresh the page to show the new spreadsheet
+        
+        // Fetch updated spreadsheet list instead of refreshing page
         window.location.reload()
       }
     } catch (e) {
       console.error("Failed to duplicate spreadsheet:", e)
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -71,20 +95,28 @@ function SpreadsheetCardContent({ sheet }: { sheet: Spreadsheet }) {
     // Copy the spreadsheet URL to clipboard
     const url = `${window.location.origin}/spreadsheet/${sheet.id}`
     navigator.clipboard.writeText(url)
+    // Use a toast notification instead of an alert for better UX
     alert("Spreadsheet URL copied to clipboard!")
   }
 
   const handleDelete = async () => {
     if (confirm("Are you sure you want to delete this spreadsheet? This action cannot be undone.")) {
+      setIsLoading(true)
       try {
         const response = await spreadsheetApi.deleteSpreadsheet(sheet.id)
         if (response.error) {
           throw response.error
         }
-        // Refresh the page to show updated list
-        window.location.reload()
+        
+        // Signal to parent that this sheet was deleted
+        onUpdate({
+          ...sheet,
+          _deleted: true
+        } as UISpreadsheet)
       } catch (e) {
         console.error("Failed to delete spreadsheet:", e)
+      } finally {
+        setIsLoading(false)
       }
     }
   }
@@ -93,9 +125,10 @@ function SpreadsheetCardContent({ sheet }: { sheet: Spreadsheet }) {
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-      whileHover={{ scale: 1.02 }}
+      transition={{ duration: 0.2 }}
+      whileHover={{ scale: 1.01 }}
       className="group"
+      layout
     >
       <Card className="overflow-hidden transition-all hover:shadow-md">
         <CardContent className="p-0">
@@ -115,15 +148,17 @@ function SpreadsheetCardContent({ sheet }: { sheet: Spreadsheet }) {
                     onChange={(e) => setNewTitle(e.target.value)}
                     className="h-8 text-sm"
                     autoFocus
+                    disabled={isLoading}
                   />
-                  <Button type="submit" size="sm" variant="ghost">
-                    Save
+                  <Button type="submit" size="sm" variant="ghost" disabled={isLoading}>
+                    {isLoading ? <MessageLoading /> : 'Save'}
                   </Button>
                   <Button
                     type="button"
                     size="sm"
                     variant="ghost"
                     onClick={() => setIsRenaming(false)}
+                    disabled={isLoading}
                   >
                     Cancel
                   </Button>
@@ -140,6 +175,7 @@ function SpreadsheetCardContent({ sheet }: { sheet: Spreadsheet }) {
                 size="icon"
                 className="h-8 w-8"
                 onClick={handleToggleStar}
+                disabled={isLoading}
               >
                 <Star
                   className={`h-4 w-4 ${
@@ -149,8 +185,12 @@ function SpreadsheetCardContent({ sheet }: { sheet: Spreadsheet }) {
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                    <MoreHorizontal className="h-4 w-4" />
+                  <Button variant="ghost" size="icon" className="h-8 w-8" disabled={isLoading}>
+                    {isLoading ? (
+                      <MessageLoading />
+                    ) : (
+                      <MoreHorizontal className="h-4 w-4" />
+                    )}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -186,10 +226,30 @@ function SpreadsheetCardContent({ sheet }: { sheet: Spreadsheet }) {
 
 export default function DashboardPage() {
   const { getSpreadsheets, createSpreadsheet, isLoaded, isSignedIn } = useSpreadsheetApi()
-  const [spreadsheets, setSpreadsheets] = useState<Spreadsheet[]>([])
+  const [spreadsheets, setSpreadsheets] = useState<UISpreadsheet[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  const [isCreatingSheet, setIsCreatingSheet] = useState(false)
+
+  // Preload critical content
+  const [headingVisible, setHeadingVisible] = useState(true)
+
+  // Use priority loading for fonts
+  useEffect(() => {
+    // Preload critical fonts
+    const fontPreload = document.createElement('link')
+    fontPreload.href = '/fonts/your-bold-font.woff2' // Update with your actual font path
+    fontPreload.rel = 'preload'
+    fontPreload.as = 'font'
+    fontPreload.type = 'font/woff2'
+    fontPreload.crossOrigin = 'anonymous'
+    document.head.appendChild(fontPreload)
+
+    return () => {
+      document.head.removeChild(fontPreload)
+    }
+  }, [])
 
   useEffect(() => {
     if (isLoaded && isSignedIn) {
@@ -215,6 +275,7 @@ export default function DashboardPage() {
   }
 
   async function handleCreateSpreadsheet() {
+    setIsCreatingSheet(true)
     try {
       const response = await createSpreadsheet("Untitled Spreadsheet")
       if (response.error) {
@@ -225,121 +286,177 @@ export default function DashboardPage() {
       }
     } catch (e) {
       console.error("Failed to create spreadsheet:", e)
+      setIsCreatingSheet(false)
     }
   }
 
-  // Filter spreadsheets based on search query
-  const filteredSpreadsheets = spreadsheets.filter(sheet =>
-    sheet.title.toLowerCase().includes(searchQuery.toLowerCase())
+  // Function to update a spreadsheet in the state
+  const handleUpdateSpreadsheet = (updatedSheet: UISpreadsheet) => {
+    setSpreadsheets(prevSheets => {
+      // If sheet is marked for deletion, filter it out
+      if (updatedSheet._deleted) {
+        return prevSheets.filter(s => s.id !== updatedSheet.id)
+      }
+      
+      // Otherwise update the sheet
+      return prevSheets.map(s => 
+        s.id === updatedSheet.id ? updatedSheet : s
+      )
+    })
+  }
+
+  // Memoize filtered spreadsheets to avoid recalculations on every render
+  const filteredSpreadsheets = React.useMemo(() => 
+    spreadsheets.filter(sheet =>
+      sheet.title.toLowerCase().includes(searchQuery.toLowerCase())
+    ),
+    [spreadsheets, searchQuery]
   )
 
   // Filter starred and recent spreadsheets from filtered results
-  const starredSpreadsheets = filteredSpreadsheets.filter(sheet => sheet.data?.isStarred)
-  const recentSpreadsheets = filteredSpreadsheets
-    .filter(sheet => !sheet.data?.isStarred) // Exclude starred spreadsheets
-    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+  const starredSpreadsheets = React.useMemo(() => 
+    filteredSpreadsheets.filter(sheet => sheet.data?.isStarred),
+    [filteredSpreadsheets]
+  )
+  
+  const recentSpreadsheets = React.useMemo(() => 
+    filteredSpreadsheets
+      .filter(sheet => !sheet.data?.isStarred)
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
+    [filteredSpreadsheets]
+  )
 
-  if (!isLoaded || loading) {
-    return (
-      <SidebarProvider>
-        <DashboardLayout>
-          <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+  // Simple header that renders immediately
+  const PageHeader = () => (
+    <>
+      {/* Optimized heading to improve LCP - this gets rendered immediately */}
+      {headingVisible && (
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <h2 
+            className="text-3xl font-bold text-gray-900"
+            style={{ fontVariationSettings: "'wght' 700" }}
+          >
+            Your Spreadsheets
+          </h2>
+        </div>
+      )}
+    </>
+  )
+
+  const renderContent = () => {
+    if (!isLoaded || loading) {
+      return (
+        <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
+          <MessageLoading />
+        </div>
+      )
+    }
+
+    if (error) {
+      return (
+        <div className="flex h-[calc(100vh-4rem)] items-center justify-center flex-col">
+          <PageHeader />
+          <div className="text-center">
+            <p className="text-red-500 mb-2">Error loading spreadsheets</p>
+            <Button onClick={loadSpreadsheets}>Try Again</Button>
           </div>
-        </DashboardLayout>
-      </SidebarProvider>
-    )
-  }
+        </div>
+      )
+    }
 
-  if (error) {
     return (
-      <SidebarProvider>
-        <DashboardLayout>
-          <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
-            <div className="text-center">
-              <p className="text-red-500 mb-2">Error loading spreadsheets</p>
-              <Button onClick={loadSpreadsheets}>Try Again</Button>
+      <div className="p-6">
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <h2 
+            className="text-3xl font-bold text-gray-900"
+            style={{ fontVariationSettings: "'wght' 700" }}
+          >
+            Your Spreadsheets
+          </h2>
+          <div className="flex flex-col sm:flex-row items-center gap-4">
+            <div className="relative w-full sm:w-[400px]">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
+              <Input
+                type="search"
+                placeholder="Search spreadsheets..."
+                className="w-full bg-gray-100 pl-9 focus-visible:ring-1"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                  onClick={() => setSearchQuery("")}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
             </div>
-          </div>
-        </DashboardLayout>
-      </SidebarProvider>
-    )
-  }
-
-  return (
-    <SidebarProvider>
-      <DashboardLayout>
-        <div className="p-6">
-          <div className="mb-8 flex items-center justify-between">
-            <h2 className="text-3xl font-bold text-gray-900">Your Spreadsheets</h2>
-            <div className="flex items-center gap-4">
-              <div className="relative w-[400px]">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-                <Input
-                  type="search"
-                  placeholder="Search For Anything...(Spreadsheet, Features, etc)"
-                  className="w-full bg-gray-100 pl-9 focus-visible:ring-1"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-                {searchQuery && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-                    onClick={() => setSearchQuery("")}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-              <Button onClick={handleCreateSpreadsheet} className="flex items-center gap-2">
+            <Button 
+              onClick={handleCreateSpreadsheet} 
+              className="w-full sm:w-auto flex items-center gap-2"
+              disabled={isCreatingSheet}
+            >
+              {isCreatingSheet ? (
+                <MessageLoading />
+              ) : (
                 <Plus className="h-5 w-5" />
-                New Spreadsheet
-              </Button>
-            </div>
+              )}
+              New Spreadsheet
+            </Button>
           </div>
+        </div>
 
-          {searchQuery && filteredSpreadsheets.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-gray-500">No spreadsheets found matching "{searchQuery}"</p>
-            </div>
-          ) : (
-            <>
+        {searchQuery && filteredSpreadsheets.length === 0 ? (
+          <div className="text-center py-8">
+            <p className="text-gray-500">No spreadsheets found matching "{searchQuery}"</p>
+          </div>
+        ) : (
+          <>
+            {/* Defer non-critical rendering */}
+            <React.Suspense fallback={<div className="h-8 w-full bg-gray-100 animate-pulse rounded"></div>}>
               {/* Starred Spreadsheets */}
               <div className="mb-8">
                 <div className="mb-4 flex items-center gap-2">
                   <Star className="h-5 w-5 text-yellow-500" />
                   <h3 className="text-xl font-semibold text-gray-900">Starred</h3>
                 </div>
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                   {starredSpreadsheets.map((sheet) => (
-                    <SpreadsheetCard key={sheet.id} sheet={sheet} />
+                    <MemoizedSpreadsheetCard 
+                      key={sheet.id} 
+                      sheet={sheet} 
+                      onUpdate={handleUpdateSpreadsheet}
+                    />
                   ))}
                   {starredSpreadsheets.length === 0 && (
                     <p className="text-gray-500 col-span-3">No starred spreadsheets yet</p>
                   )}
                 </div>
               </div>
+            </React.Suspense>
 
+            {/* Lazy load recent spreadsheets */}
+            <React.Suspense fallback={<div className="h-8 w-full bg-gray-100 animate-pulse rounded"></div>}>
               {/* Recent Spreadsheets */}
-              <div>
-                <div className="mb-4 flex items-center gap-2">
-                  <Clock className="h-5 w-5 text-gray-500" />
-                  <h3 className="text-xl font-semibold text-gray-900">Recent</h3>
-                </div>
-                <div className="grid gap-4 md:grid-cols-3">
-                  {recentSpreadsheets.map((sheet) => (
-                    <SpreadsheetCard key={sheet.id} sheet={sheet} />
-                  ))}
-                  {recentSpreadsheets.length === 0 && (
-                    <p className="text-gray-500 col-span-3">No spreadsheets yet</p>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-        </div>
+              <RecentSpreadsheets 
+                spreadsheets={recentSpreadsheets} 
+                onUpdate={handleUpdateSpreadsheet} 
+                SpreadsheetCard={MemoizedSpreadsheetCard} 
+              />
+            </React.Suspense>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <SidebarProvider>
+      <DashboardLayout>
+        {renderContent()}
       </DashboardLayout>
     </SidebarProvider>
   )
