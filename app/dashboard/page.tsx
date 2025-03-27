@@ -1,14 +1,16 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Plus, Star, Clock, FileSpreadsheet, Search, MoreHorizontal, X } from "lucide-react"
+import { Plus, Bookmark, Clock, FileSpreadsheet, Search, MoreHorizontal, X } from "lucide-react"
 import Link from "next/link"
 import DashboardLayout from "@/components/Dashboard/dashboard-layout"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { useSpreadsheetApi } from "@/lib/supabase/secure-api"
 import { SpreadsheetProvider, useSpreadsheet } from "@/context/spreadsheet-context"
+import { useFolder } from "@/context/folder-context"
 import type { Spreadsheet } from "@/lib/supabase/types"
 import { formatDistanceToNow } from "date-fns"
 import { Card, CardContent } from "@/components/ui/card"
@@ -17,6 +19,11 @@ import { motion } from "framer-motion"
 import React from "react"
 import { MessageLoading } from "@/components/ui/message-loading"
 import RecentSpreadsheets from "@/components/Dashboard/RecentSpreadsheets"
+import { MoveFolderModal } from "@/components/move-folder-modal"
+import SpreadsheetPreview from "@/components/SpreadSheet/spreadsheet-preview"
+import { useUser } from "@clerk/nextjs"
+import { useDraggable } from "@dnd-kit/core"
+import { DndContext, DragEndEvent } from "@dnd-kit/core"
 
 // Extended spreadsheet type for UI operations
 interface UISpreadsheet extends Spreadsheet {
@@ -24,9 +31,24 @@ interface UISpreadsheet extends Spreadsheet {
 }
 
 function SpreadsheetCard({ sheet, onUpdate }: { sheet: UISpreadsheet, onUpdate: (updatedSheet: UISpreadsheet) => void }) {
+  const { attributes, listeners, setNodeRef, transform } = useDraggable({
+    id: sheet.id,
+    data: {
+      type: 'spreadsheet',
+      spreadsheet: sheet
+    }
+  })
+
+  const style = transform ? {
+    transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+    zIndex: 999,
+  } : undefined
+
   return (
     <SpreadsheetProvider spreadsheetId={sheet.id}>
-      <SpreadsheetCardContent sheet={sheet} onUpdate={onUpdate} />
+      <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+        <SpreadsheetCardContent sheet={sheet} onUpdate={onUpdate} />
+      </div>
     </SpreadsheetProvider>
   )
 }
@@ -34,16 +56,45 @@ function SpreadsheetCard({ sheet, onUpdate }: { sheet: UISpreadsheet, onUpdate: 
 const MemoizedSpreadsheetCard = React.memo(SpreadsheetCard)
 
 function SpreadsheetCardContent({ sheet, onUpdate }: { sheet: UISpreadsheet, onUpdate: (updatedSheet: UISpreadsheet) => void }) {
-  const { toggleStar, isStarred } = useSpreadsheet()
+  const { toggleStar: toggleBookmark, isStarred: isBookmarked } = useSpreadsheet()
   const spreadsheetApi = useSpreadsheetApi()
   const [isRenaming, setIsRenaming] = useState(false)
   const [newTitle, setNewTitle] = useState(sheet.title)
   const [isLoading, setIsLoading] = useState(false)
+  const [isMoveModalOpen, setIsMoveModalOpen] = useState(false)
 
-  const handleToggleStar = (e: React.MouseEvent) => {
+  const handleToggleBookmark = async (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    toggleStar()
+    setIsLoading(true)
+    try {
+      const newIsStarred = !sheet.data?.isStarred
+      const response = await spreadsheetApi.updateSpreadsheet(sheet.id, {
+        ...sheet.data,
+        isStarred: newIsStarred,
+        meta: {
+          rowCount: 100,
+          columnCount: 26,
+          lastModified: new Date().toISOString(),
+        }
+      })
+      
+      if (response.error) {
+        throw response.error
+      }
+      
+      onUpdate({
+        ...sheet,
+        data: {
+          ...(sheet.data || {}),
+          isStarred: newIsStarred
+        }
+      })
+    } catch (e) {
+      console.error("Failed to toggle bookmark:", e)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleRename = async () => {
@@ -57,7 +108,6 @@ function SpreadsheetCardContent({ sheet, onUpdate }: { sheet: UISpreadsheet, onU
       }
       setIsRenaming(false)
       
-      // Update the spreadsheet in the parent component
       onUpdate({
         ...sheet,
         title: newTitle
@@ -72,16 +122,12 @@ function SpreadsheetCardContent({ sheet, onUpdate }: { sheet: UISpreadsheet, onU
   const handleDuplicate = async () => {
     setIsLoading(true)
     try {
-      // Create a new spreadsheet with the same data
       const response = await spreadsheetApi.createSpreadsheet(`${sheet.title} (Copy)`)
       if (response.error) {
         throw response.error
       }
       if (response.data?.[0]?.id) {
-        // Update the new spreadsheet with the data from the current one
         await spreadsheetApi.updateSpreadsheet(response.data[0].id, sheet.data || {})
-        
-        // Fetch updated spreadsheet list instead of refreshing page
         window.location.reload()
       }
     } catch (e) {
@@ -92,10 +138,8 @@ function SpreadsheetCardContent({ sheet, onUpdate }: { sheet: UISpreadsheet, onU
   }
 
   const handleShare = () => {
-    // Copy the spreadsheet URL to clipboard
     const url = `${window.location.origin}/spreadsheet/${sheet.id}`
     navigator.clipboard.writeText(url)
-    // Use a toast notification instead of an alert for better UX
     alert("Spreadsheet URL copied to clipboard!")
   }
 
@@ -108,7 +152,6 @@ function SpreadsheetCardContent({ sheet, onUpdate }: { sheet: UISpreadsheet, onU
           throw response.error
         }
         
-        // Signal to parent that this sheet was deleted
         onUpdate({
           ...sheet,
           _deleted: true
@@ -127,135 +170,185 @@ function SpreadsheetCardContent({ sheet, onUpdate }: { sheet: UISpreadsheet, onU
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
       whileHover={{ scale: 1.01 }}
-      className="group"
+      className="group relative"
       layout
     >
-      <Card className="overflow-hidden transition-all hover:shadow-md">
-        <CardContent className="p-0">
-          <div className="flex items-center justify-between p-4 bg-muted/30">
-            <div className="flex items-center">
-              <FileSpreadsheet className="h-5 w-5 mr-2 text-primary" />
-              {isRenaming ? (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    handleRename()
-                  }}
-                  className="flex items-center gap-2"
-                >
-                  <Input
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    className="h-8 text-sm"
-                    autoFocus
-                    disabled={isLoading}
-                  />
-                  <Button type="submit" size="sm" variant="ghost" disabled={isLoading}>
-                    {isLoading ? <MessageLoading /> : 'Save'}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setIsRenaming(false)}
-                    disabled={isLoading}
-                  >
-                    Cancel
-                  </Button>
-                </form>
-              ) : (
-                <Link href={`/spreadsheet/${sheet.id}`}>
-                  <span className="font-medium text-gray-900">{sheet.title}</span>
-                </Link>
-              )}
+      <div className="relative">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 absolute right-2 top-2 z-10"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleToggleBookmark(e);
+          }}
+          disabled={isLoading}
+        >
+          <Bookmark
+            className={`h-4 w-4 transition-colors ${
+              isLoading ? "text-gray-300" : sheet.data?.isStarred ? "fill-gray-900 text-gray-900" : "text-gray-400"
+            }`}
+          />
+        </Button>
+        <Link href={`/spreadsheet/${sheet.id}`} className="block" onClick={(e) => {
+          if (isLoading) {
+            e.preventDefault();
+          }
+        }}>
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-md transition-shadow">
+            {/* Thumbnail */}
+            <div className="h-36 bg-gray-50 border-b border-gray-200 flex items-center justify-center p-4">
+              <SpreadsheetPreview cells={sheet.data?.cells || {}} />
             </div>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                onClick={handleToggleStar}
-                disabled={isLoading}
-              >
-                <Star
-                  className={`h-4 w-4 ${
-                    isStarred ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"
-                  }`}
-                />
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" disabled={isLoading}>
-                    {isLoading ? (
-                      <MessageLoading />
-                    ) : (
-                      <MoreHorizontal className="h-4 w-4" />
-                    )}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setIsRenaming(true)}>
-                    Rename
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleDuplicate}>
-                    Duplicate
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleShare}>
-                    Share
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={handleDelete}
-                    className="text-destructive"
-                  >
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+            
+            {/* Metadata */}
+            <div className="p-3">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2 min-w-0">
+                  {isRenaming ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault()
+                        handleRename()
+                      }}
+                      className="flex items-center gap-2"
+                    >
+                      <Input
+                        value={newTitle}
+                        onChange={(e) => setNewTitle(e.target.value)}
+                        className="h-8 text-sm"
+                        autoFocus
+                        disabled={isLoading}
+                      />
+                      <Button type="submit" size="sm" variant="ghost" disabled={isLoading}>
+                        {isLoading ? <MessageLoading /> : 'Save'}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setIsRenaming(false)}
+                        disabled={isLoading}
+                      >
+                        Cancel
+                      </Button>
+                    </form>
+                  ) : (
+                    <span className="font-medium text-sm text-gray-900 truncate">
+                      {sheet.title}
+                    </span>
+                  )}
+                </div>
+                
+                <div className="flex items-center gap-1">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild onClick={(e) => e.preventDefault()}>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                        disabled={isLoading}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                      >
+                        {isLoading ? (
+                          <MessageLoading />
+                        ) : (
+                          <MoreHorizontal className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenuItem onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setIsRenaming(true);
+                      }}>
+                        Rename
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleDuplicate();
+                      }}>
+                        Duplicate
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleShare();
+                      }}>
+                        Share
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setIsMoveModalOpen(true);
+                      }}>
+                        Move to
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleDelete();
+                        }}
+                        className="text-destructive"
+                      >
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
+              
+              <div className="flex items-center text-xs text-gray-500">
+                <span>Opened {formatDistanceToNow(new Date(sheet.updated_at))} ago</span>
+              </div>
             </div>
           </div>
-          <div className="p-4 border-t">
-            <p className="text-xs text-muted-foreground">
-              Last edited {formatDistanceToNow(new Date(sheet.updated_at))} ago
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+        </Link>
+      </div>
+
+      <MoveFolderModal
+        open={isMoveModalOpen}
+        onOpenChange={setIsMoveModalOpen}
+        spreadsheetId={sheet.id}
+        currentFolderId={sheet.folder_id || null}
+      />
     </motion.div>
   )
 }
 
 export default function DashboardPage() {
+  const searchParams = useSearchParams()
   const { getSpreadsheets, createSpreadsheet, isLoaded, isSignedIn } = useSpreadsheetApi()
+  const { activeFolder, folders, setActiveFolder, moveSpreadsheet } = useFolder()
+  const { user } = useUser()
   const [spreadsheets, setSpreadsheets] = useState<UISpreadsheet[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [isCreatingSheet, setIsCreatingSheet] = useState(false)
-
-  // Preload critical content
   const [headingVisible, setHeadingVisible] = useState(true)
 
-  // Use priority loading for fonts
+  // Sync activeFolder with URL parameter
   useEffect(() => {
-    // Preload critical fonts
-    const fontPreload = document.createElement('link')
-    fontPreload.href = '/fonts/your-bold-font.woff2' // Update with your actual font path
-    fontPreload.rel = 'preload'
-    fontPreload.as = 'font'
-    fontPreload.type = 'font/woff2'
-    fontPreload.crossOrigin = 'anonymous'
-    document.head.appendChild(fontPreload)
-
-    return () => {
-      document.head.removeChild(fontPreload)
+    const folderParam = searchParams.get('folder')
+    // Only update if there's a mismatch between URL and state
+    if ((folderParam && folderParam !== activeFolder) || (!folderParam && activeFolder !== null)) {
+      setActiveFolder(folderParam || null)
     }
-  }, [])
+  }, [searchParams, activeFolder, setActiveFolder])
 
   useEffect(() => {
     if (isLoaded && isSignedIn) {
       loadSpreadsheets()
     }
-  }, [isLoaded, isSignedIn])
+  }, [isLoaded, isSignedIn, activeFolder])
 
   async function loadSpreadsheets() {
     setLoading(true)
@@ -277,7 +370,7 @@ export default function DashboardPage() {
   async function handleCreateSpreadsheet() {
     setIsCreatingSheet(true)
     try {
-      const response = await createSpreadsheet("Untitled Spreadsheet")
+      const response = await createSpreadsheet("Untitled Spreadsheet", activeFolder)
       if (response.error) {
         throw response.error
       }
@@ -305,13 +398,24 @@ export default function DashboardPage() {
     })
   }
 
-  // Memoize filtered spreadsheets to avoid recalculations on every render
-  const filteredSpreadsheets = React.useMemo(() => 
-    spreadsheets.filter(sheet =>
-      sheet.title.toLowerCase().includes(searchQuery.toLowerCase())
-    ),
-    [spreadsheets, searchQuery]
-  )
+  // Filter spreadsheets based on active folder and search query
+  const filteredSpreadsheets = React.useMemo(() => {
+    let filtered = spreadsheets
+
+    // Filter by folder
+    if (activeFolder) {
+      filtered = filtered.filter(sheet => sheet.folder_id === activeFolder)
+    }
+
+    // Filter by search query
+    if (searchQuery) {
+      filtered = filtered.filter(sheet =>
+        sheet.title.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    }
+
+    return filtered
+  }, [spreadsheets, activeFolder, searchQuery])
 
   // Filter starred and recent spreadsheets from filtered results
   const starredSpreadsheets = React.useMemo(() => 
@@ -326,22 +430,31 @@ export default function DashboardPage() {
     [filteredSpreadsheets]
   )
 
-  // Simple header that renders immediately
-  const PageHeader = () => (
-    <>
-      {/* Optimized heading to improve LCP - this gets rendered immediately */}
-      {headingVisible && (
-        <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <h2 
-            className="text-3xl font-bold text-gray-900"
-            style={{ fontVariationSettings: "'wght' 700" }}
-          >
-            Your Spreadsheets
-          </h2>
-        </div>
-      )}
-    </>
-  )
+  // Get current folder name for display
+  const currentFolderName = React.useMemo(() => {
+    if (!activeFolder) return "All Spreadsheets"
+    const folder = folders.find(f => f.id === activeFolder)
+    return folder ? folder.name : "All Spreadsheets"
+  }, [activeFolder, folders])
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+
+    if (!over) return
+
+    const spreadsheetId = active.id as string
+    const folderId = over.data.current?.folderId as string | null
+
+    if (active.data.current?.type === 'spreadsheet' && over.data.current?.type === 'folder') {
+      try {
+        await moveSpreadsheet(spreadsheetId, folderId)
+        // Refresh the spreadsheets list
+        loadSpreadsheets()
+      } catch (error) {
+        console.error('Failed to move spreadsheet:', error)
+      }
+    }
+  }
 
   const renderContent = () => {
     if (!isLoaded || loading) {
@@ -355,7 +468,6 @@ export default function DashboardPage() {
     if (error) {
       return (
         <div className="flex h-[calc(100vh-4rem)] items-center justify-center flex-col">
-          <PageHeader />
           <div className="text-center">
             <p className="text-red-500 mb-2">Error loading spreadsheets</p>
             <Button onClick={loadSpreadsheets}>Try Again</Button>
@@ -365,99 +477,106 @@ export default function DashboardPage() {
     }
 
     return (
-      <div className="p-6">
-        <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <h2 
-            className="text-3xl font-bold text-gray-900"
-            style={{ fontVariationSettings: "'wght' 700" }}
-          >
-            Your Spreadsheets
-          </h2>
-          <div className="flex flex-col sm:flex-row items-center gap-4">
-            <div className="relative w-full sm:w-[400px]">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-              <Input
-                type="search"
-                placeholder="Search spreadsheets..."
-                className="w-full bg-gray-100 pl-9 focus-visible:ring-1"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              {searchQuery && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-                  onClick={() => setSearchQuery("")}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
+      <DndContext onDragEnd={handleDragEnd}>
+        <div className="p-6">
+          {searchQuery && filteredSpreadsheets.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-gray-500">No spreadsheets found matching "{searchQuery}"</p>
             </div>
-            <Button 
-              onClick={handleCreateSpreadsheet} 
-              className="w-full sm:w-auto flex items-center gap-2"
-              disabled={isCreatingSheet}
-            >
-              {isCreatingSheet ? (
-                <MessageLoading />
-              ) : (
-                <Plus className="h-5 w-5" />
-              )}
-              New Spreadsheet
-            </Button>
-          </div>
+          ) : (
+            <>
+              {/* Defer non-critical rendering */}
+              <React.Suspense fallback={<div className="h-8 w-full bg-gray-100 animate-pulse rounded"></div>}>
+                {/* Starred Spreadsheets */}
+                <div className="mb-8">
+                  <div className="mb-4 flex items-center gap-2">
+                    <Bookmark className="h-5 w-5 text-gray-900" />
+                    <h3 className="text-xl font-semibold text-gray-900">Bookmarked</h3>
+                  </div>
+                  <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                    {starredSpreadsheets.map((sheet) => (
+                      <MemoizedSpreadsheetCard 
+                        key={sheet.id} 
+                        sheet={sheet} 
+                        onUpdate={handleUpdateSpreadsheet}
+                      />
+                    ))}
+                    {starredSpreadsheets.length === 0 && (
+                      <p className="text-gray-500 col-span-full">No bookmarked spreadsheets yet</p>
+                    )}
+                  </div>
+                </div>
+              </React.Suspense>
+
+              {/* Lazy load recent spreadsheets */}
+              <React.Suspense fallback={<div className="h-8 w-full bg-gray-100 animate-pulse rounded"></div>}>
+                {/* Recent Spreadsheets */}
+                <RecentSpreadsheets 
+                  spreadsheets={recentSpreadsheets} 
+                  onUpdate={handleUpdateSpreadsheet} 
+                  SpreadsheetCard={MemoizedSpreadsheetCard} 
+                />
+              </React.Suspense>
+            </>
+          )}
         </div>
-
-        {searchQuery && filteredSpreadsheets.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-gray-500">No spreadsheets found matching "{searchQuery}"</p>
-          </div>
-        ) : (
-          <>
-            {/* Defer non-critical rendering */}
-            <React.Suspense fallback={<div className="h-8 w-full bg-gray-100 animate-pulse rounded"></div>}>
-              {/* Starred Spreadsheets */}
-              <div className="mb-8">
-                <div className="mb-4 flex items-center gap-2">
-                  <Star className="h-5 w-5 text-yellow-500" />
-                  <h3 className="text-xl font-semibold text-gray-900">Starred</h3>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {starredSpreadsheets.map((sheet) => (
-                    <MemoizedSpreadsheetCard 
-                      key={sheet.id} 
-                      sheet={sheet} 
-                      onUpdate={handleUpdateSpreadsheet}
-                    />
-                  ))}
-                  {starredSpreadsheets.length === 0 && (
-                    <p className="text-gray-500 col-span-3">No starred spreadsheets yet</p>
-                  )}
-                </div>
-              </div>
-            </React.Suspense>
-
-            {/* Lazy load recent spreadsheets */}
-            <React.Suspense fallback={<div className="h-8 w-full bg-gray-100 animate-pulse rounded"></div>}>
-              {/* Recent Spreadsheets */}
-              <RecentSpreadsheets 
-                spreadsheets={recentSpreadsheets} 
-                onUpdate={handleUpdateSpreadsheet} 
-                SpreadsheetCard={MemoizedSpreadsheetCard} 
-              />
-            </React.Suspense>
-          </>
-        )}
-      </div>
+      </DndContext>
     )
   }
 
   return (
     <SidebarProvider>
-      <DashboardLayout>
-        {renderContent()}
-      </DashboardLayout>
+      <DndContext onDragEnd={handleDragEnd}>
+        <DashboardLayout>
+          <div className="flex flex-col gap-8">
+            <header className="sticky top-0 z-10 bg-background">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6">
+                <h2 
+                  className="text-3xl font-bold text-gray-900"
+                  style={{ fontVariationSettings: "'wght' 700" }}
+                >
+                  All Spreadsheets
+                </h2>
+                <div className="flex flex-col sm:flex-row items-center gap-4">
+                  <div className="relative w-full sm:w-[400px]">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
+                    <Input
+                      type="search"
+                      placeholder="Search spreadsheets..."
+                      className="w-full bg-gray-100 pl-9 focus-visible:ring-1"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                    {searchQuery && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                        onClick={() => setSearchQuery("")}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  <Button 
+                    onClick={handleCreateSpreadsheet} 
+                    className="w-full sm:w-auto flex items-center gap-2"
+                    disabled={isCreatingSheet}
+                  >
+                    {isCreatingSheet ? (
+                      <MessageLoading />
+                    ) : (
+                      <Plus className="h-5 w-5" />
+                    )}
+                    New Spreadsheet
+                  </Button>
+                </div>
+              </div>
+            </header>
+            {renderContent()}
+          </div>
+        </DashboardLayout>
+      </DndContext>
     </SidebarProvider>
   )
 }

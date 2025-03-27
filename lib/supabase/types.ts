@@ -1,6 +1,7 @@
 export type Spreadsheet = {
   id: string;
   user_id: string;
+  folder_id?: string | null;
   title: string;
   data?: {
     isStarred?: boolean;

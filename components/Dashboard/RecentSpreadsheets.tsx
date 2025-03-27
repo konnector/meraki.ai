@@ -96,7 +96,7 @@ export default function RecentSpreadsheets({ spreadsheets, onUpdate, Spreadsheet
       </div>
       
       {layout === 'grid' && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 relative">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 relative">
           {spreadsheets.map((sheet) => (
             <div className="transition-all hover:translate-y-[-2px] duration-200" key={sheet.id}>
               <SpreadsheetCard 
@@ -107,7 +107,7 @@ export default function RecentSpreadsheets({ spreadsheets, onUpdate, Spreadsheet
             </div>
           ))}
           {spreadsheets.length === 0 && (
-            <p className="text-gray-500 col-span-3">No spreadsheets yet</p>
+            <p className="text-gray-500 col-span-full">No spreadsheets yet</p>
           )}
         </div>
       )}
@@ -142,7 +142,7 @@ export default function RecentSpreadsheets({ spreadsheets, onUpdate, Spreadsheet
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
               transition={{ duration: 0.2 }}
-              className="grid grid-cols-1 md:grid-cols-3 gap-4 relative min-h-[260px]"
+              className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 relative min-h-[260px]"
             >
               {getCurrentItems().map((sheet, index) => (
                 <motion.div 

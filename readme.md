@@ -21,23 +21,43 @@ Meraki.ai is a modern web application built with Next.js 15, TypeScript, and a c
   - Toast notifications (Sonner)
   - Date handling (date-fns)
 
-## Features
-- ✅ **Secure Authentication**: User sign-up/sign-in with Clerk
-- ✅ **Role-Based Access Control**: Implemented with Supabase RLS
-- ✅ **Dashboard Interface**: View, search, and organize spreadsheets
-- ✅ **Spreadsheet Management**: Create, read, update, delete operations
-- ✅ **User-Isolated Data**: Each user can only see their own spreadsheets
-- ✅ **Spreadsheet Features**:
-  - Real-time data saving
+## Features and Implementation Status
+- ✅ **Secure Authentication**: 
+  - User sign-up/sign-in with Clerk
+  - JWT template configuration
+  - Session management
+  - Protected routes
+- ✅ **Database Integration**: 
+  - Supabase setup with RLS
+  - JSONB data structure
+  - Real-time updates
+  - Secure client implementation
+- ✅ **Dashboard Interface**: 
+  - View and search spreadsheets
+  - Organize by starred/recent
+  - Clean modern UI
+- ✅ **Core Spreadsheet Features**:
+  - Real-time data saving with debounce
   - Title editing with auto-save
   - Star/unstar functionality
-  - Cell formatting
-  - Formula support
+  - Basic cell formatting
+  - Formula support (basic)
   - Copy/paste functionality
   - Undo/redo support
-- ⬜ **Sharing Functionality**: Coming soon
-- ⬜ **Collaboration Tools**: Coming soon
-- ⬜ **AI Integration**: Coming soon
+- 🟨 **Advanced Spreadsheet Features**:
+  - Cell range selection (in progress)
+  - Advanced formulas (in progress)
+  - Data validation (planned)
+  - Custom cell types (planned)
+- ⬜ **Collaboration Features**: 
+  - Real-time collaboration (planned)
+  - User permissions (planned)
+  - Version history (planned)
+  - Comments and notes (planned)
+- ⬜ **AI Integration**: 
+  - Formula suggestions (planned)
+  - Data analysis (planned)
+  - Smart formatting (planned)
 
 ## Project Structure
 ```
@@ -161,6 +181,12 @@ This approach provides:
 - Implement proper error handling
 - Write clean, maintainable code
 - Follow the established project structure
+
+## Known Issues & Limitations
+- Large spreadsheets may experience performance issues
+- Some advanced formula calculations may be slow
+- Real-time collaboration features not yet implemented
+- Limited mobile device support
 
 ## Contributing
 [Your contribution guidelines here]

@@ -183,9 +183,26 @@ export function SpreadsheetProvider({ children, spreadsheetId }: { children: Rea
   }, [spreadsheetId, spreadsheetApi, cells, isStarred]);
 
   // Add star toggle function
-  const toggleStar = useCallback(() => {
+  const toggleStar = useCallback(async () => {
     setIsStarred(prev => !prev);
-  }, []);
+    if (spreadsheetId) {
+      try {
+        await spreadsheetApi.updateSpreadsheet(spreadsheetId, {
+          cells,
+          isStarred: !isStarred,
+          meta: {
+            rowCount: 100,
+            columnCount: 26,
+            lastModified: new Date().toISOString(),
+          }
+        });
+      } catch (err) {
+        console.error('Failed to update spreadsheet star status:', err);
+        // Revert the state if the API call fails
+        setIsStarred(isStarred);
+      }
+    }
+  }, [spreadsheetId, spreadsheetApi, cells, isStarred]);
 
   // Function to save current state to history
   const saveToHistory = useCallback(() => {

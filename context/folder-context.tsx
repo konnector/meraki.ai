@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 type FolderContextType = {
   folders: Folder[]
+  totalSpreadsheetCount: number
   isLoading: boolean
   activeFolder: string | null
   setActiveFolder: (id: string | null) => void
@@ -27,6 +28,7 @@ export function useFolder() {
 
 export function FolderProvider({ children }: { children: ReactNode }) {
   const [folders, setFolders] = useState<Folder[]>([])
+  const [totalSpreadsheetCount, setTotalSpreadsheetCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [activeFolder, setActiveFolder] = useState<string | null>(null)
   const folderApi = useFolderApi()
@@ -45,6 +47,7 @@ export function FolderProvider({ children }: { children: ReactNode }) {
         if (!folderApi.isSignedIn) {
           console.log('Not signed in, clearing folders');
           setFolders([]);
+          setTotalSpreadsheetCount(0);
           return;
         }
 
@@ -52,7 +55,8 @@ export function FolderProvider({ children }: { children: ReactNode }) {
         console.log('Loading folders...');
         const data = await folderApi.getFolders();
         console.log('Folders loaded:', data);
-        setFolders(data || []);
+        setFolders(data.folders || []);
+        setTotalSpreadsheetCount(data.totalSpreadsheetCount);
       } catch (err) {
         console.error('Failed to load folders:', err);
         toast.error('Failed to load folders');
@@ -136,47 +140,127 @@ export function FolderProvider({ children }: { children: ReactNode }) {
 
   const updateFolder = useCallback(async (id: string, name: string) => {
     try {
-      const folder = await folderApi.updateFolder(id, name)
-      setFolders(prev => prev.map(f => f.id === id ? folder : f))
-      toast.success('Folder updated')
+      // Wait to ensure we have an authenticated session
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      while (attempts < maxAttempts) {
+        try {
+          const folder = await folderApi.updateFolder(id, name);
+          setFolders(prev => prev.map(f => f.id === id ? folder : f));
+          toast.success('Folder updated');
+          return;
+        } catch (error) {
+          // Check if it's an authentication error
+          if (error instanceof Error && 
+              (error.message === 'No active session' || 
+               error.message === 'Clerk session is still loading')) {
+            attempts++;
+            if (attempts < maxAttempts) {
+              // Wait longer between attempts
+              await new Promise(resolve => setTimeout(resolve, 500));
+              continue;
+            }
+          }
+          // If it's not an auth error or we've exceeded attempts, rethrow
+          throw error;
+        }
+      }
+      
+      // If we get here, we've exceeded retry attempts
+      throw new Error('Unable to authenticate after multiple attempts');
     } catch (err) {
-      console.error('Failed to update folder:', err)
-      toast.error('Failed to update folder')
-      throw err
+      console.error('Failed to update folder:', err);
+      toast.error('Failed to update folder');
+      throw err;
     }
-  }, [])
+  }, [folderApi]);
 
   const deleteFolder = useCallback(async (id: string) => {
     try {
-      await folderApi.deleteFolder(id)
-      setFolders(prev => prev.filter(f => f.id !== id))
-      if (activeFolder === id) {
-        setActiveFolder(null)
+      // Wait to ensure we have an authenticated session
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      while (attempts < maxAttempts) {
+        try {
+          await folderApi.deleteFolder(id);
+          setFolders(prev => prev.filter(f => f.id !== id));
+          if (activeFolder === id) {
+            setActiveFolder(null);
+          }
+          toast.success('Folder deleted');
+          return;
+        } catch (error) {
+          // Check if it's an authentication error
+          if (error instanceof Error && 
+              (error.message === 'No active session' || 
+               error.message === 'Clerk session is still loading')) {
+            attempts++;
+            if (attempts < maxAttempts) {
+              // Wait longer between attempts
+              await new Promise(resolve => setTimeout(resolve, 500));
+              continue;
+            }
+          }
+          // If it's not an auth error or we've exceeded attempts, rethrow
+          throw error;
+        }
       }
-      toast.success('Folder deleted')
+      
+      // If we get here, we've exceeded retry attempts
+      throw new Error('Unable to authenticate after multiple attempts');
     } catch (err) {
-      console.error('Failed to delete folder:', err)
-      toast.error('Failed to delete folder')
-      throw err
+      console.error('Failed to delete folder:', err);
+      toast.error('Failed to delete folder');
+      throw err;
     }
-  }, [activeFolder])
+  }, [activeFolder, folderApi]);
 
   const moveSpreadsheet = useCallback(async (spreadsheetId: string, folderId: string | null) => {
     try {
-      await folderApi.moveSpreadsheet(spreadsheetId, folderId)
-      // Update folder counts
-      const data = await folderApi.getFolders()
-      setFolders(data || [])
-      toast.success('Spreadsheet moved')
+      // Wait to ensure we have an authenticated session, with retry logic
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      while (attempts < maxAttempts) {
+        try {
+          await folderApi.moveSpreadsheet(spreadsheetId, folderId);
+          // Update folder counts
+          const data = await folderApi.getFolders();
+          setFolders(data.folders || []);
+          setTotalSpreadsheetCount(data.totalSpreadsheetCount);
+          toast.success('Spreadsheet moved');
+          return;
+        } catch (error) {
+          // Check if it's an authentication error
+          if (error instanceof Error && 
+              (error.message === 'No active session' || 
+               error.message === 'Clerk session is still loading')) {
+            attempts++;
+            if (attempts < maxAttempts) {
+              // Wait longer between attempts
+              await new Promise(resolve => setTimeout(resolve, 500));
+              continue;
+            }
+          }
+          // If it's not an auth error or we've exceeded attempts, rethrow
+          throw error;
+        }
+      }
+      
+      // If we get here, we've exceeded retry attempts
+      throw new Error('Unable to authenticate after multiple attempts');
     } catch (err) {
-      console.error('Failed to move spreadsheet:', err)
-      toast.error('Failed to move spreadsheet')
-      throw err
+      console.error('Failed to move spreadsheet:', err);
+      toast.error('Failed to move spreadsheet');
+      throw err;
     }
-  }, [])
+  }, [folderApi]);
 
   const value = {
     folders,
+    totalSpreadsheetCount,
     isLoading,
     activeFolder,
     setActiveFolder,

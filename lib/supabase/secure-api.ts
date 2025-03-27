@@ -11,12 +11,13 @@ export function useSpreadsheetApi() {
     isSignedIn,
     
     // Create a new spreadsheet
-    async createSpreadsheet(title: string) {
+    async createSpreadsheet(title: string, folder_id?: string | null) {
       const client = await getClient();
       return client
         .from('spreadsheets')
         .insert([{ 
           title, 
+          folder_id,
           data: {},
           created_at: new Date().toISOString()
         }])

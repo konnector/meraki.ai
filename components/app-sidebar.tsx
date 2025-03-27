@@ -43,14 +43,25 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <Sidebar collapsible="icon" {...props}>
         <SidebarHeader>
           <div className="flex flex-col items-center justify-center gap-2 p-2">
-            <h4 className="scroll-m-20 tracking-tight text-2xl font-black px-2 text-center">
-              Meraki AI
-            </h4>
+            <div className="flex items-center gap-2 px-2">
+              <img 
+                src="/sava.png" 
+                alt="Sava Logo" 
+                className="w-6 h-6 -mt-1"
+
+              />
+              <h4 className="scroll-m-20 tracking-tight text-2xl font-calsans text-center">
+                Meraki AI
+              </h4>
+            </div>
           </div>
         </SidebarHeader>
         
         <SidebarContent>
           <div className="transition-all duration-200 flex-1 h-fit pb-12 mx-4">
+            <h3 className="mb-2 px-2 text-sm font-semibold text-muted-foreground">
+              Folders
+            </h3>
             <FoldersSection />
             
             <button 
@@ -67,7 +78,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <div className="w-62 flex items-center gap-2 rounded-[12px] border bg-card text-card-foreground shadow-sm mb-6 mx-2 p-3">
             <span className="relative flex shrink-0 overflow-hidden rounded-full w-8 h-8">
               <img 
-                className="aspect-square h-full w-full" 
+                className="aspect-square h-full w-full  " 
                 src={user?.imageUrl} 
                 alt={user?.fullName || 'User avatar'}
               />
@@ -80,37 +91,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 {user?.primaryEmailAddress?.emailAddress}
               </small>
             </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="active:scale-110 transition-all duration-100">
-                  <Settings className="w-5 h-5" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
-                  <User className="mr-2 h-4 w-4" />
-                  <span>Profile</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
-                  <CreditCard className="mr-2 h-4 w-4" />
-                  <span>Billing</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
-                  <Bell className="mr-2 h-4 w-4" />
-                  <span>Notifications</span>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem 
-                  className="text-red-600"
-                  onClick={() => signOut(() => router.push('/'))}
-                >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>Log out</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setSettingsOpen(true)}
+                className="active:scale-110 transition-all duration-100"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </SidebarFooter>
         <SidebarRail />

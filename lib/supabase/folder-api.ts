@@ -14,7 +14,15 @@ export function useFolderApi() {
 
   const getFolders = async () => {
     const client = await getClient()
-    // Get folders with spreadsheet count
+    
+    // First get the total count of all spreadsheets
+    const { count: totalCount, error: countError } = await client
+      .from('spreadsheets')
+      .select('*', { count: 'exact', head: true })
+
+    if (countError) throw countError
+
+    // Then get folders with their spreadsheet counts
     const { data, error } = await client
       .from('folders')
       .select(`
@@ -29,11 +37,14 @@ export function useFolderApi() {
 
     if (error) throw error
 
-    // Transform the data to match the Folder type
-    return (data || []).map(folder => ({
-      ...folder,
-      spreadsheet_count: folder.spreadsheets?.[0]?.count || 0
-    })) as Folder[]
+    // Transform the data to match the Folder type and include total count
+    return {
+      folders: (data || []).map(folder => ({
+        ...folder,
+        spreadsheet_count: folder.spreadsheets?.[0]?.count || 0
+      })) as Folder[],
+      totalSpreadsheetCount: totalCount || 0
+    }
   }
 
   const createFolder = async (name: string) => {
