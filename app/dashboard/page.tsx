@@ -14,7 +14,7 @@ import { useFolder } from "@/context/folder-context"
 import type { Spreadsheet } from "@/lib/supabase/types"
 import { formatDistanceToNow } from "date-fns"
 import { Card, CardContent } from "@/components/ui/card"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { motion } from "framer-motion"
 import React from "react"
 import { MessageLoading } from "@/components/ui/message-loading"
@@ -22,8 +22,8 @@ import RecentSpreadsheets from "@/components/Dashboard/RecentSpreadsheets"
 import { MoveFolderModal } from "@/components/move-folder-modal"
 import SpreadsheetPreview from "@/components/SpreadSheet/spreadsheet-preview"
 import { useUser } from "@clerk/nextjs"
-import { useDraggable } from "@dnd-kit/core"
-import { DndContext, DragEndEvent } from "@dnd-kit/core"
+import { TagSelector } from "@/components/TagSelector"
+import { SpreadsheetTags } from "@/components/SpreadsheetTags"
 
 // Extended spreadsheet type for UI operations
 interface UISpreadsheet extends Spreadsheet {
@@ -31,24 +31,9 @@ interface UISpreadsheet extends Spreadsheet {
 }
 
 function SpreadsheetCard({ sheet, onUpdate }: { sheet: UISpreadsheet, onUpdate: (updatedSheet: UISpreadsheet) => void }) {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({
-    id: sheet.id,
-    data: {
-      type: 'spreadsheet',
-      spreadsheet: sheet
-    }
-  })
-
-  const style = transform ? {
-    transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-    zIndex: 999,
-  } : undefined
-
   return (
     <SpreadsheetProvider spreadsheetId={sheet.id}>
-      <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-        <SpreadsheetCardContent sheet={sheet} onUpdate={onUpdate} />
-      </div>
+      <SpreadsheetCardContent sheet={sheet} onUpdate={onUpdate} />
     </SpreadsheetProvider>
   )
 }
@@ -89,7 +74,7 @@ function SpreadsheetCardContent({ sheet, onUpdate }: { sheet: UISpreadsheet, onU
           ...(sheet.data || {}),
           isStarred: newIsStarred
         }
-      })
+      } as UISpreadsheet)
     } catch (e) {
       console.error("Failed to toggle bookmark:", e)
     } finally {
@@ -290,6 +275,22 @@ function SpreadsheetCardContent({ sheet, onUpdate }: { sheet: UISpreadsheet, onU
                       }}>
                         Move to
                       </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <TagSelector 
+                        spreadsheetId={sheet.id} 
+                        onOpenChange={(open) => {
+                          // Close dropdown menu when tag selector is closed
+                          if (!open) {
+                            const event = new MouseEvent('click', {
+                              bubbles: true,
+                              cancelable: true,
+                              view: window
+                            });
+                            document.dispatchEvent(event);
+                          }
+                        }}
+                      />
+                      <DropdownMenuSeparator />
                       <DropdownMenuItem
                         onClick={(e) => {
                           e.preventDefault();
@@ -305,8 +306,11 @@ function SpreadsheetCardContent({ sheet, onUpdate }: { sheet: UISpreadsheet, onU
                 </div>
               </div>
               
-              <div className="flex items-center text-xs text-gray-500">
-                <span>Opened {formatDistanceToNow(new Date(sheet.updated_at))} ago</span>
+              <div className="space-y-2">
+                <SpreadsheetTags spreadsheetId={sheet.id} className="mb-2" />
+                <div className="flex items-center text-xs text-gray-500">
+                  <span>Opened {formatDistanceToNow(new Date(sheet.updated_at))} ago</span>
+                </div>
               </div>
             </div>
           </div>
@@ -334,6 +338,13 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [isCreatingSheet, setIsCreatingSheet] = useState(false)
   const [headingVisible, setHeadingVisible] = useState(true)
+
+  // Get current folder name for display
+  const currentFolderName = React.useMemo(() => {
+    if (!activeFolder) return "All Spreadsheets"
+    const folder = folders.find(f => f.id === activeFolder)
+    return folder ? folder.name : "All Spreadsheets"
+  }, [activeFolder, folders])
 
   // Sync activeFolder with URL parameter
   useEffect(() => {
@@ -430,32 +441,6 @@ export default function DashboardPage() {
     [filteredSpreadsheets]
   )
 
-  // Get current folder name for display
-  const currentFolderName = React.useMemo(() => {
-    if (!activeFolder) return "All Spreadsheets"
-    const folder = folders.find(f => f.id === activeFolder)
-    return folder ? folder.name : "All Spreadsheets"
-  }, [activeFolder, folders])
-
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event
-
-    if (!over) return
-
-    const spreadsheetId = active.id as string
-    const folderId = over.data.current?.folderId as string | null
-
-    if (active.data.current?.type === 'spreadsheet' && over.data.current?.type === 'folder') {
-      try {
-        await moveSpreadsheet(spreadsheetId, folderId)
-        // Refresh the spreadsheets list
-        loadSpreadsheets()
-      } catch (error) {
-        console.error('Failed to move spreadsheet:', error)
-      }
-    }
-  }
-
   const renderContent = () => {
     if (!isLoaded || loading) {
       return (
@@ -477,106 +462,129 @@ export default function DashboardPage() {
     }
 
     return (
-      <DndContext onDragEnd={handleDragEnd}>
-        <div className="p-6">
-          {searchQuery && filteredSpreadsheets.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-gray-500">No spreadsheets found matching "{searchQuery}"</p>
-            </div>
-          ) : (
-            <>
-              {/* Defer non-critical rendering */}
-              <React.Suspense fallback={<div className="h-8 w-full bg-gray-100 animate-pulse rounded"></div>}>
-                {/* Starred Spreadsheets */}
-                <div className="mb-8">
-                  <div className="mb-4 flex items-center gap-2">
-                    <Bookmark className="h-5 w-5 text-gray-900" />
-                    <h3 className="text-xl font-semibold text-gray-900">Bookmarked</h3>
-                  </div>
-                  <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-                    {starredSpreadsheets.map((sheet) => (
-                      <MemoizedSpreadsheetCard 
-                        key={sheet.id} 
-                        sheet={sheet} 
-                        onUpdate={handleUpdateSpreadsheet}
-                      />
-                    ))}
-                    {starredSpreadsheets.length === 0 && (
-                      <p className="text-gray-500 col-span-full">No bookmarked spreadsheets yet</p>
-                    )}
-                  </div>
+      <div className="p-6">
+        {searchQuery && filteredSpreadsheets.length === 0 ? (
+          <div className="text-center py-8">
+            <p className="text-gray-500">No spreadsheets found matching "{searchQuery}"</p>
+          </div>
+        ) : (
+          <>
+            {/* Defer non-critical rendering */}
+            <React.Suspense fallback={<div className="h-8 w-full bg-gray-100 animate-pulse rounded"></div>}>
+              {/* Starred Spreadsheets */}
+              <div className="mb-8">
+                <div className="mb-4 flex items-center gap-2">
+                  <Bookmark className="h-5 w-5 text-gray-900" />
+                  <h3 className="text-xl font-semibold text-gray-900">Bookmarked</h3>
                 </div>
-              </React.Suspense>
+                <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                  {starredSpreadsheets.map((sheet) => (
+                    <MemoizedSpreadsheetCard 
+                      key={sheet.id} 
+                      sheet={sheet} 
+                      onUpdate={handleUpdateSpreadsheet}
+                    />
+                  ))}
+                  {starredSpreadsheets.length === 0 && (
+                    <p className="text-gray-500 col-span-full">No bookmarked spreadsheets yet</p>
+                  )}
+                </div>
+              </div>
+            </React.Suspense>
 
-              {/* Lazy load recent spreadsheets */}
-              <React.Suspense fallback={<div className="h-8 w-full bg-gray-100 animate-pulse rounded"></div>}>
-                {/* Recent Spreadsheets */}
-                <RecentSpreadsheets 
-                  spreadsheets={recentSpreadsheets} 
-                  onUpdate={handleUpdateSpreadsheet} 
-                  SpreadsheetCard={MemoizedSpreadsheetCard} 
-                />
-              </React.Suspense>
-            </>
-          )}
-        </div>
-      </DndContext>
+            {/* Lazy load recent spreadsheets */}
+            <React.Suspense fallback={<div className="h-8 w-full bg-gray-100 animate-pulse rounded"></div>}>
+              {/* Recent Spreadsheets */}
+              <RecentSpreadsheets 
+                spreadsheets={recentSpreadsheets} 
+                onUpdate={handleUpdateSpreadsheet} 
+                SpreadsheetCard={MemoizedSpreadsheetCard} 
+              />
+            </React.Suspense>
+          </>
+        )}
+      </div>
     )
   }
 
   return (
     <SidebarProvider>
-      <DndContext onDragEnd={handleDragEnd}>
-        <DashboardLayout>
-          <div className="flex flex-col gap-8">
-            <header className="sticky top-0 z-10 bg-background">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6">
-                <h2 
-                  className="text-3xl font-bold text-gray-900"
-                  style={{ fontVariationSettings: "'wght' 700" }}
-                >
-                  All Spreadsheets
-                </h2>
-                <div className="flex flex-col sm:flex-row items-center gap-4">
-                  <div className="relative w-full sm:w-[400px]">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-                    <Input
-                      type="search"
-                      placeholder="Search spreadsheets..."
-                      className="w-full bg-gray-100 pl-9 focus-visible:ring-1"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                    {searchQuery && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-                        onClick={() => setSearchQuery("")}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                  <Button 
-                    onClick={handleCreateSpreadsheet} 
-                    className="w-full sm:w-auto flex items-center gap-2"
-                    disabled={isCreatingSheet}
-                  >
-                    {isCreatingSheet ? (
-                      <MessageLoading />
-                    ) : (
-                      <Plus className="h-5 w-5" />
-                    )}
-                    New Spreadsheet
-                  </Button>
+      <DashboardLayout>
+        <div className="flex flex-col gap-4">
+          <header className="sticky top-0 z-10 bg-background">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4">
+              <h2 
+                className="text-3xl font-bold text-gray-900"
+                style={{ fontVariationSettings: "'wght' 700" }}
+              >
+                {currentFolderName}
+              </h2>
+              <div className="flex flex-col sm:flex-row items-center gap-4">
+                <div className="relative w-full sm:w-[400px]">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
+                  <Input
+                    type="search"
+                    placeholder="Search spreadsheets..."
+                    className="w-full bg-gray-100 pl-9 focus-visible:ring-1"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  {searchQuery && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                      onClick={() => setSearchQuery("")}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
+                <Button 
+                  onClick={handleCreateSpreadsheet} 
+                  className="w-full sm:w-auto flex items-center gap-2"
+                  disabled={isCreatingSheet}
+                >
+                  {isCreatingSheet ? (
+                    <MessageLoading />
+                  ) : (
+                    <Plus className="h-5 w-5" />
+                  )}
+                  New Spreadsheet
+                </Button>
               </div>
-            </header>
-            {renderContent()}
+            </div>
+          </header>
+          <div className="px-4">
+            <div className="mb-4">
+              <div className="mb-2 flex items-center gap-2">
+                <Bookmark className="h-5 w-5 text-gray-900" />
+                <h3 className="text-xl font-semibold text-gray-900">Bookmarked</h3>
+              </div>
+              <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                {starredSpreadsheets.map((sheet) => (
+                  <MemoizedSpreadsheetCard 
+                    key={sheet.id} 
+                    sheet={sheet} 
+                    onUpdate={handleUpdateSpreadsheet}
+                  />
+                ))}
+                {starredSpreadsheets.length === 0 && (
+                  <p className="text-gray-500 col-span-full">No bookmarked spreadsheets yet</p>
+                )}
+              </div>
+            </div>
+
+            <React.Suspense fallback={<div className="h-8 w-full bg-gray-100 animate-pulse rounded"></div>}>
+              <RecentSpreadsheets 
+                spreadsheets={recentSpreadsheets} 
+                onUpdate={handleUpdateSpreadsheet} 
+                SpreadsheetCard={MemoizedSpreadsheetCard} 
+              />
+            </React.Suspense>
           </div>
-        </DashboardLayout>
-      </DndContext>
+        </div>
+      </DashboardLayout>
     </SidebarProvider>
   )
 }

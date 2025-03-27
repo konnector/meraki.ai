@@ -1,20 +1,21 @@
 "use client"
 
-import type { ReactNode } from "react"
-import { ThemeProvider } from "@/components/theme-provider"
-import { SpreadsheetProvider } from "@/context/spreadsheet-context"
-import { FolderProvider } from "@/context/folder-context"
 import { ClerkProvider } from "@clerk/nextjs"
+import { ThemeProvider } from "@/components/theme-provider"
+import { Toaster } from "sonner"
+import { FolderProvider } from "@/context/folder-context"
+import { TagProvider } from "@/context/tag-context"
 
-export function Providers({ children }: { children: ReactNode }) {
+export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <ClerkProvider publishableKey={process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}>
-      <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} forcedTheme="light">
-        <SpreadsheetProvider>
-          <FolderProvider>
+    <ClerkProvider>
+      <ThemeProvider attribute="class" defaultTheme="light">
+        <FolderProvider>
+          <TagProvider>
             {children}
-          </FolderProvider>
-        </SpreadsheetProvider>
+            <Toaster />
+          </TagProvider>
+        </FolderProvider>
       </ThemeProvider>
     </ClerkProvider>
   )
